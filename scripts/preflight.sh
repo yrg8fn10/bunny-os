@@ -60,7 +60,9 @@ else
   fatal=1
 fi
 
-for cmd in pacman bsdtar squashfs-tools xorriso mksquashfs openssl awk sed find; do
+# Check binaries, not package names: squashfs-tools installs mksquashfs/unsquashfs
+# and there is no `squashfs-tools` executable to find on PATH.
+for cmd in pacman bsdtar mksquashfs unsquashfs xorriso openssl awk sed find; do
   if have "${cmd}"; then
     printf '  %s✓%s %s\n' "${C_MINT}" "${C_RESET}" "${cmd}"
   else
