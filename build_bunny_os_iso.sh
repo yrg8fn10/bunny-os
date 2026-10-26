@@ -201,6 +201,42 @@ if (( BOOT_REFS_MISSING > 0 )); then
 fi
 log_info "all boot entry paths present in the image"
 
+# --- 5b. Verify the image survives being copied onto FAT32 ------------------
+# The Steam Deck firmware only enumerates USB media it can read as FAT32, so the
+# supported flashing path is Rufus "ISO Image mode", which copies the ISO 9660
+# tree verbatim onto a FAT32 partition. Two properties have to hold for that to
+# reach a running system, and neither is visible until the Deck is booting.
+log_step "5/6 Verifying FAT32 flashing compatibility"
+
+# The initramfs finds airootfs.sfs by volume label, and the loader entries carry
+# archisolabel= rendered from profiledef.sh. If the label on the image and the
+# label the entries ask for ever drift, the live system panics looking for root.
+ISO_LABEL_EXPECTED="$(sed -nE 's#^iso_label="([^"]*)".*#\1#p' "${STAGE}/profiledef.sh")"
+if have blkid; then
+  ISO_LABEL_ACTUAL="$(blkid -p -o value -s LABEL "${FINAL_ISO}" 2>/dev/null || true)"
+  if [[ "${ISO_LABEL_ACTUAL}" != "${ISO_LABEL_EXPECTED}" ]]; then
+    die "volume label is '${ISO_LABEL_ACTUAL}', boot entries look for '${ISO_LABEL_EXPECTED}'"
+  fi
+  log_info "volume label matches boot entries: ${ISO_LABEL_ACTUAL}"
+else
+  log_warn "blkid not available - skipping volume label check"
+fi
+
+# FAT32 cannot store a file of 4 GiB or more, and Rufus refuses to extract one.
+TOO_BIG="$(bsdtar -tvf "${FINAL_ISO}" 2>/dev/null \
+  | awk '$5 ~ /^[0-9]+$/ && $5 >= 4294967296 { print $5 " " $NF }')"
+if [[ -n "${TOO_BIG}" ]]; then
+  die "these files exceed the FAT32 4 GiB limit: ${TOO_BIG}"
+fi
+log_info "no file exceeds the FAT32 4 GiB limit"
+
+# Sanity: the squashfs the entries will boot into must be where archisobasedir
+# says it is.
+INSTALL_DIR_STAGED="$(sed -nE 's#^install_dir="([^"]*)".*#\1#p' "${STAGE}/profiledef.sh")"
+grep -qxF "${INSTALL_DIR_STAGED}/x86_64/airootfs.sfs" <<<"${ISO_TREE}" \
+  || die "${INSTALL_DIR_STAGED}/x86_64/airootfs.sfs missing from the image"
+log_info "airootfs.sfs present under ${INSTALL_DIR_STAGED}/x86_64/"
+
 ISO_SHA="$(sha256_of "${FINAL_ISO}")"
 ISO_SIZE="$(stat -c '%s' "${FINAL_ISO}" 2>/dev/null || stat -f '%z' "${FINAL_ISO}")"
 printf '%s  %s\n' "${ISO_SHA}" "$(basename "${FINAL_ISO}")" \
