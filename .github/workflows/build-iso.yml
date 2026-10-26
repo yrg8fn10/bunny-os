@@ -81,7 +81,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm --needed \
             archiso squashfs-tools libisoburn libarchive openssl \
-            python git make dosfstools mtools
+            mkinitcpio python git make dosfstools mtools
 
       - uses: actions/checkout@v4
 
