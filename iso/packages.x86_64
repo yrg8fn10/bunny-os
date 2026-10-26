@@ -10,6 +10,7 @@ linux-firmware
 amd-ucode
 intel-ucode
 mkinitcpio
+mkinitcpio-archiso
 systemd
 systemd-sysvcompat
 sudo

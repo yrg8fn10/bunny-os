@@ -422,6 +422,26 @@ def check_build(rep: Report) -> None:
             "boot entries leave root= to the archiso hook",
             "root= makes systemd target the FAT32 volume instead of the squashfs")
 
+    # archiso mounts the live root from its own initramfs hook. That hook only
+    # ends up in the image when mkinitcpio-archiso is installed and its drop-in
+    # is present; otherwise mkinitcpio writes a stock Arch initramfs that cannot
+    # find airootfs.sfs at all.
+    pkgs = (ROOT / "iso/packages.x86_64").read_text("utf-8").splitlines()
+    pkgs = [l.strip() for l in pkgs if l.strip() and not l.strip().startswith("#")]
+    rep.add("mkinitcpio-archiso" in pkgs, "packages.x86_64 lists mkinitcpio-archiso")
+    dropin = ROOT / "iso/airootfs/etc/mkinitcpio.conf.d/archiso.conf"
+    rep.add(dropin.is_file(), "profile ships the archiso mkinitcpio drop-in")
+    hooks_line = ""
+    if dropin.is_file():
+        for line in dropin.read_text("utf-8").splitlines():
+            if line.strip().startswith("HOOKS="):
+                hooks_line = line
+    for hook in ("udev", "memdisk", "archiso"):
+        rep.add(f" {hook} " in f" {hooks_line} " or f" {hook})" in hooks_line,
+                f"archiso HOOKS includes {hook}")
+    rep.add("initramfs can mount the live root" in script,
+            "build verifies the initramfs carries the archiso hook")
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,

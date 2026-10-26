@@ -237,6 +237,32 @@ grep -qxF "${INSTALL_DIR_STAGED}/x86_64/airootfs.sfs" <<<"${ISO_TREE}" \
   || die "${INSTALL_DIR_STAGED}/x86_64/airootfs.sfs missing from the image"
 log_info "airootfs.sfs present under ${INSTALL_DIR_STAGED}/x86_64/"
 
+# --- 5c. Verify the initramfs can actually mount the live root --------------
+# archiso mounts airootfs.sfs with its own hook inside the initramfs. If
+# mkinitcpio-archiso is not installed, or its hook is missing from HOOKS,
+# mkinitcpio writes a stock Arch initramfs that understands only root= and
+# systemd's gpt-auto discovery. The kernel then boots fine and the image dies at
+# "Timed out waiting for device /dev/gpt-auto-root" or "Failed to start Switch
+# Root" - nothing on the outside of the ISO shows the difference, so look inside.
+log_step "5/6 Verifying the initramfs can mount the live root"
+INITRAMFS_IN_ISO="${INSTALL_DIR_STAGED}/boot/x86_64/initramfs-linux.img"
+grep -qxF "${INITRAMFS_IN_ISO}" <<<"${ISO_TREE}" \
+  || die "${INITRAMFS_IN_ISO} missing from the image"
+command -v lsinitcpio >/dev/null 2>&1 \
+  || die "lsinitcpio not available - cannot verify the initramfs contents"
+INITRD_TMP="$(mktemp)"
+bsdtar -xOf "${FINAL_ISO}" "${INITRAMFS_IN_ISO}" > "${INITRD_TMP}" \
+  || die "cannot extract ${INITRAMFS_IN_ISO} from the image"
+INITRD_LIST="$(lsinitcpio -l "${INITRD_TMP}" 2>/dev/null || true)"
+rm -f -- "${INITRD_TMP}"
+[[ -n "${INITRD_LIST}" ]] || die "cannot list the initramfs contents"
+for hook in udev memdisk archiso; do
+  if ! grep -qE "(^|/)hooks/${hook}( |\$)" <<<"${INITRD_LIST}"; then
+    die "initramfs is missing the '${hook}' hook - it cannot mount airootfs.sfs (needs mkinitcpio-archiso and the archiso HOOKS drop-in)"
+  fi
+done
+log_info "initramfs carries the archiso hook and can mount the live root"
+
 ISO_SHA="$(sha256_of "${FINAL_ISO}")"
 ISO_SIZE="$(stat -c '%s' "${FINAL_ISO}" 2>/dev/null || stat -f '%z' "${FINAL_ISO}")"
 printf '%s  %s\n' "${ISO_SHA}" "$(basename "${FINAL_ISO}")" \

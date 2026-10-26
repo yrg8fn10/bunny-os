@@ -221,6 +221,7 @@ If a check fails, note the command output and the kernel log
 | Boot menu shows no USB entry | DD mode is invisible to some Deck firmware; reflash in ISO mode |
 | `Error preparing initrd: Not found` | the entry referenced a file archiso did not ship; rebuild with current `iso/overrides` |
 | `Timed out waiting for device /dev/gpt-auto-root`, then emergency mode | the entry is missing `systemd.gpt_auto=0`; the live root is mounted by label, but systemd treats the absent `root=` as "discover from GPT" and waits on a device that never appears |
+| `Failed to start Switch Root` | the initramfs is a stock Arch one, not an archiso one — it has no hook that mounts `airootfs.sfs`. Images built before the `mkinitcpio-archiso` fix cannot boot; rebuild |
 | Bunny install failed halfway | boot the live USB again and reinstall, or restore SteamOS from the recovery USB |
 | Want SteamOS back | boot the SteamOS recovery USB and reimage the internal drive |
 | Panel stuck / no session | `Ctrl+Alt+F2`, log in as `bunny`, `journalctl -b -u sddm`, then `sudo bunnyctl set-mode gaming` |
