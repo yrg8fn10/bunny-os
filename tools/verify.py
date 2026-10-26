@@ -380,6 +380,24 @@ def check_build(rep: Report) -> None:
     rep.add("--target" in workflow, "CI can build a target profile")
     rep.add("inputs.target" in workflow, "CI exposes a target input")
 
+    # Boot entries may only reference files that archiso actually places in the
+    # image. When the initramfs already embeds microcode, archiso sets
+    # need_external_ucodes=0 and never copies /arch/boot/*-ucode.img, so an entry
+    # pointing at one fails at boot with "Error preparing initrd: Not found".
+    boot_refs: list[str] = []
+    for conf in (
+        ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/overrides/syslinux/syslinux.cfg",
+    ):
+        for line in conf.read_text("utf-8").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() in ("linux", "initrd"):
+                boot_refs.append(parts[1])
+    stray = [r for r in boot_refs if not r.startswith("/arch/boot/") or r.endswith("-ucode.img")]
+    rep.add(not stray, "boot entries reference only files archiso ships")
+    rep.add("Verifying boot entry paths" in script, "build verifies boot entry paths")
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,

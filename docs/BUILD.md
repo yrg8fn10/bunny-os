@@ -215,10 +215,12 @@ sync
 sudo ./scripts/flash-usb.sh out/BunnyOS-installer.iso /dev/sdX
 ```
 
-On Windows, write the ISO with Rufus in **DD mode** or balenaEtcher. Do not use
-Ventoy: it copies the ISO as a file and the `archisolabel` lookup fails. For the
-Steam Deck LCD, follow [STEAMDECK.md](STEAMDECK.md) instead — it covers the
-USB-C requirement, boot keys, recovery media and the hardware checklist.
+On Windows, write the ISO with Rufus (**ISO Image mode** on machines that skip
+hybrid images, otherwise **DD mode**) or balenaEtcher. Do not use Ventoy: it
+copies the ISO as a file and the `archisolabel` lookup fails. For the Steam Deck
+LCD, follow [STEAMDECK.md](STEAMDECK.md) instead — it covers the USB-C
+requirement, the FAT32/DD difference, boot keys, recovery media and the hardware
+checklist.
 
 Boot with UEFI. Secure Boot must be disabled for v0.1 because the image is not
 signed with a key enrolled in your firmware. Ventoy and similar multiboot

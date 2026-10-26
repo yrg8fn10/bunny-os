@@ -176,6 +176,31 @@ FINAL_ISO="${OUT_DIR}/${ISO_BASENAME}.iso"
 if [[ "${BUILT_ISO}" != "${FINAL_ISO}" ]]; then
   mv -f -- "${BUILT_ISO}" "${FINAL_ISO}"
 fi
+
+# --- 5a. Verify every path the boot entries ask for exists in the image -----
+# archiso only copies files the profile actually references, and it skips
+# /arch/boot/*-ucode.img whenever the initramfs already embeds microcode. An
+# entry pointing at a file that was never copied boots as far as the loader and
+# then dies with "Error preparing initrd: Not found", which is invisible to any
+# check that runs before mkarchiso. List the finished image and cross-check.
+log_step "5/6 Verifying boot entry paths"
+ISO_TREE="$(bsdtar -tf "${FINAL_ISO}")" || die "cannot list ${FINAL_ISO}"
+BOOT_REFS_MISSING=0
+while IFS= read -r conf; do
+  while IFS= read -r ref; do
+    [[ -n "${ref}" ]] || continue
+    ref="${ref#/}"
+    if ! grep -qxF -- "${ref}" <<<"${ISO_TREE}"; then
+      log_error "${conf#"${STAGE}/"}: references '${ref}', which is not in the image"
+      BOOT_REFS_MISSING=$(( BOOT_REFS_MISSING + 1 ))
+    fi
+  done < <(sed -nE 's#^[[:space:]]*(linux|initrd|LINUX|INITRD)[[:space:]]+(/[^[:space:]]+).*#\2#p' "${conf}")
+done < <(find "${STAGE}" -type f \( -path '*/loader/entries/*.conf' -o -name 'syslinux.cfg' \) -print)
+if (( BOOT_REFS_MISSING > 0 )); then
+  die "${BOOT_REFS_MISSING} boot entry path(s) missing from the image - it would fail to boot"
+fi
+log_info "all boot entry paths present in the image"
+
 ISO_SHA="$(sha256_of "${FINAL_ISO}")"
 ISO_SIZE="$(stat -c '%s' "${FINAL_ISO}" 2>/dev/null || stat -f '%z' "${FINAL_ISO}")"
 printf '%s  %s\n' "${ISO_SHA}" "$(basename "${FINAL_ISO}")" \

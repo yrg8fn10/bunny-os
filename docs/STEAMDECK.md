@@ -110,12 +110,22 @@ The build needs Linux, but flashing does not.
    Get-FileHash .\BunnyOS-deck-installer.iso -Algorithm SHA256
    Get-Content .\BunnyOS-deck-installer.iso.sha256
    ```
-3. Write it to a USB stick with **Rufus** (select the ISO, choose **DD mode**
-   when asked) or **balenaEtcher**. At least 8 GB; 16 GB is comfortable.
-4. **Do not use Ventoy** or any tool that copies the ISO as a file. The live
-   system needs the `BUNNY_OS` filesystem label and the ISO's own partition
-   layout.
-5. The Deck has a single USB-C port. Use a USB-C flash drive, or a USB-C hub
+3. Write it to a USB stick with **Rufus** or **balenaEtcher**. At least 8 GB;
+   16 GB is comfortable.
+4. **Preferred for the Steam Deck: Rufus "ISO Image mode" (FAT32).** The Deck's
+   firmware only enumerates USB media it can read as FAT32, so a DD-written
+   image can be invisible in the boot manager even though it is a valid hybrid
+   ISO. ISO mode copies the same files onto a FAT32 partition, which the Deck
+   does see — the live system only needs the files and the `BUNNY_OS` label.
+   Select **GPT** + **UEFI (non CSM)**, then answer **ISO Image mode** when
+   Rufus asks.
+5. DD mode also boots once the media is enumerated, but if the Deck shows no
+   USB entry, ISO mode is the supported workaround. Both must keep the
+   `BUNNY_OS` volume label: the initramfs finds `airootfs.sfs` by label.
+6. **Do not use Ventoy** or any tool that keeps the ISO as a file on a shared
+   partition. The live system needs the `BUNNY_OS` label on the filesystem that
+   holds `arch/`.
+7. The Deck has a single USB-C port. Use a USB-C flash drive, or a USB-C hub
    with a USB-A stick. A hub is also the easiest way to attach a keyboard for
    recovery.
 
@@ -125,8 +135,9 @@ Writing the ISO **erases the USB stick**, not the Deck.
 
 1. Power the Deck off.
 2. Hold **Volume Down + Power** until the boot menu appears.
-3. Select the USB device. If it is not listed, try another port/hub or reflash
-   in DD mode.
+3. Select the USB device. If it is not listed, reflash in Rufus **ISO Image
+   mode** (FAT32) — the Deck skips USB media it cannot read as FAT32, and DD
+   mode leaves the ISO's ISO9660 layout in place.
 4. **Volume Up + Power** opens the UEFI settings, including boot order.
 
 The Deck's firmware does not enforce Secure Boot for removable media, but the
@@ -206,7 +217,9 @@ If a check fails, note the command output and the kernel log
 
 | Situation | Recovery |
 |-----------|----------|
-| Live USB will not boot | reflash in Rufus **DD mode**; try a USB-A stick through a hub |
+| Live USB will not boot | reflash in Rufus **ISO Image mode** (FAT32); try a USB-A stick through a hub |
+| Boot menu shows no USB entry | DD mode is invisible to some Deck firmware; reflash in ISO mode |
+| `Error preparing initrd: Not found` | the entry referenced a file archiso did not ship; rebuild with current `iso/overrides` |
 | Bunny install failed halfway | boot the live USB again and reinstall, or restore SteamOS from the recovery USB |
 | Want SteamOS back | boot the SteamOS recovery USB and reimage the internal drive |
 | Panel stuck / no session | `Ctrl+Alt+F2`, log in as `bunny`, `journalctl -b -u sddm`, then `sudo bunnyctl set-mode gaming` |

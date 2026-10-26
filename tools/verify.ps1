@@ -232,6 +232,24 @@ foreach ($key in @('iso_name=', 'iso_label=', 'bootmodes=', 'install_dir=', 'air
 }
 Check 'boots UEFI + BIOS' ($profile -match 'uefi.systemd-boot' -and $profile -match 'bios.syslinux')
 
+# archiso skips /arch/boot/*-ucode.img when the initramfs already embeds
+# microcode, so entries may only name files archiso actually ships.
+$bootRefs = @()
+foreach ($rel in @(
+        'iso\overrides\efiboot\loader\entries\01-bunny-os.conf',
+        'iso\targets\deck\overlay\efiboot\loader\entries\01-bunny-os.conf',
+        'iso\overrides\syslinux\syslinux.cfg')) {
+    foreach ($line in (Get-Content -LiteralPath (Join-Path $Root $rel))) {
+        $parts = $line.Trim() -split '\s+'
+        if ($parts.Count -ge 2 -and $parts[0] -in @('linux', 'initrd', 'LINUX', 'INITRD')) {
+            $bootRefs += $parts[1]
+        }
+    }
+}
+$strayRefs = @($bootRefs | Where-Object { -not $_.StartsWith('/arch/boot/') -or $_.EndsWith('-ucode.img') })
+Check 'boot entries reference only files archiso ships' ($strayRefs.Count -eq 0) ($strayRefs -join ', ')
+Check 'build verifies boot entry paths' ((Get-Content -LiteralPath (Join-Path $Root 'build_bunny_os_iso.sh') -Raw) -match 'Verifying boot entry paths')
+
 # --- target profiles --------------------------------------------------------
 Write-Head "target profiles"
 $targetRoot = Join-Path $Root 'iso\targets'
