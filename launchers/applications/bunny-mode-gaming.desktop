@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Switch to Gaming Mode
+Comment=Return to the controller-first Control Panel
+Exec=/usr/local/bin/bunnyctl switch-mode gaming
+Icon=/opt/bunny/panel/ui/assets/bunny.svg
+Terminal=false
+Categories=Game;Utility;
+Keywords=gaming;mode;session;

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" data-theme="bunny">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Bunny OS Control Panel — controller-first gaming overlay">
+  <title>Bunny OS — Control Panel</title>
+  <link rel="icon" href="assets/bunny.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/panel.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <span class="blob blob--pink"></span>
+    <span class="blob blob--mint"></span>
+    <span class="blob blob--blue"></span>
+    <span class="grain"></span>
+  </div>
+
+  <div id="app" class="app" data-mode="gaming" data-view="home">
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand__mark" src="assets/bunny.svg" alt="" width="44" height="44">
+        <div class="brand__text">
+          <span class="brand__name">Bunny<span>OS</span></span>
+          <span class="brand__sub" id="build-label">Control Panel</span>
+        </div>
+      </div>
+
+      <div class="topbar__meta">
+        <button class="chip chip--mode" id="mode-chip" data-action="toggle-mode"
+                data-focusable title="Switch session mode">
+          <svg class="icon" aria-hidden="true"><use href="#i-mode"/></svg>
+          <span id="mode-label">Gaming Mode</span>
+        </button>
+        <div class="chip chip--ghost" id="agent-chip" data-state="offline">
+          <span class="dot"></span><span id="agent-label">Bun Bun offline</span>
+        </div>
+        <div class="clock" id="clock">--:--</div>
+      </div>
+    </header>
+
+    <nav class="rail" aria-label="Sections">
+      <button class="rail__item is-active" data-action="navigate" data-view="home" data-focusable>
+        <svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="rail__item" data-action="navigate" data-view="platforms" data-focusable>
+        <svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg>
+        <span>Platforms</span>
+      </button>
+      <button class="rail__item" data-action="navigate" data-view="tweaks" data-focusable>
+        <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg>
+        <span>Tweaks</span>
+      </button>
+      <button class="rail__item rail__item--accent" data-action="navigate" data-view="bunbun" data-focusable>
+        <svg class="icon" aria-hidden="true"><use href="#i-bunny"/></svg>
+        <span>Bun Bun</span>
+      </button>
+      <button class="rail__item" data-action="navigate" data-view="settings" data-focusable>
+        <svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg>
+        <span>Settings</span>
+      </button>
+      <div class="rail__spacer"></div>
+      <div class="rail__hint" id="runtime-label">local-only</div>
+    </nav>
+
+    <main class="stage" id="stage">
+      <section class="view" data-view-panel="home" aria-label="Home"></section>
+      <section class="view" data-view-panel="platforms" aria-label="Platforms" hidden></section>
+      <section class="view" data-view-panel="tweaks" aria-label="Tweaks" hidden></section>
+      <section class="view" data-view-panel="bunbun" aria-label="Bun Bun" hidden></section>
+      <section class="view" data-view-panel="settings" aria-label="Settings" hidden></section>
+    </main>
+
+    <footer class="hintbar" aria-hidden="true">
+      <div class="hint"><kbd>A</kbd> Select</div>
+      <div class="hint"><kbd>B</kbd> Back</div>
+      <div class="hint"><kbd>LB</kbd><kbd>RB</kbd> Sections</div>
+      <div class="hint"><kbd>Y</kbd> Ask Bun Bun</div>
+      <div class="hint hint--right" id="hint-status">Offline preview</div>
+    </footer>
+  </div>
+
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <noscript>
+    <p style="padding:2rem;color:#fff">The Bunny OS Control Panel needs JavaScript.</p>
+  </noscript>
+
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h7M15 7h5M4 17h5M13 17h7"/><circle cx="13" cy="7" r="2.6"/><circle cx="11" cy="17" r="2.6"/></symbol>
+    <symbol id="i-bunny" viewBox="0 0 24 24"><path d="M8 9c-1.8-1.2-3-3.4-2.4-5.5C7 3 8.6 4.7 9.3 7M16 9c1.8-1.2 3-3.4 2.4-5.5C17 3 15.4 4.7 14.7 7"/><path d="M6.5 13.5a5.5 5.5 0 0 1 11 0c0 3.6-2.4 6-5.5 6s-5.5-2.4-5.5-6Z"/><circle cx="10" cy="13" r=".9" fill="currentColor"/><circle cx="14" cy="13" r=".9" fill="currentColor"/><path d="M11 16h2"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.8 12h2.4M18.8 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5 19 12 8 18.5z"/></symbol>
+    <symbol id="i-mode" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="12" rx="3"/><path d="M8 21h8"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+    <symbol id="i-hint" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5.9 1.2.9 2V17h5.4v-1.2c0-.8.3-1.5.9-2A6 6 0 0 0 12 3Z"/><path d="M9.5 20h5"/></symbol>
+    <symbol id="i-store" viewBox="0 0 24 24"><path d="M4 9h16l-1 11H5z"/><path d="M8 9V7a4 4 0 0 1 8 0v2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.2-2.9 7.7-7 9-4.1-1.3-7-4.8-7-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></symbol>
+  </svg>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

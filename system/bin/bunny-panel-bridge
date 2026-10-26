@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""bunny-panel-bridge — loopback HTTP server for the Control Panel.
+
+Two jobs, both deliberately small:
+
+  * serve the dependency-free web UI (``/``, ``/css/…``, ``/js/…``), and
+  * proxy a fixed command vocabulary to bunny-sessiond over its unix socket.
+
+The panel is a plain web page.  Inside the Tauri shell it talks to the daemon
+through a native command; in a Chromium kiosk it needs an HTTP origin, because
+ES modules and ``file://`` do not mix and a page cannot open AF_UNIX sockets.
+
+Security posture:
+  * binds 127.0.0.1 only,
+  * runs as the desktop user, never as root,
+  * re-checks the Host header so a website cannot DNS-rebind to the bridge,
+  * static paths are resolved inside the UI directory (no traversal),
+  * the daemon re-authorises every command; this process grants nothing.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import mimetypes
+import os
+import socket
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+LOG = logging.getLogger("bunny-bridge")
+MAX_BODY = 64 * 1024
+DEFAULT_SOCKET = Path(os.environ.get("BUNNY_SOCKET", "/run/bunny/sessiond.sock"))
+DEFAULT_UI = Path(os.environ.get("BUNNY_PANEL_UI", "/opt/bunny/panel/ui"))
+
+ALLOWED_COMMANDS = {
+    "ping", "status", "get-settings", "set-settings",
+    "set-mode", "switch-mode", "launch", "library",
+    "agent", "input-agent", "power", "update",
+    "installer", "audit-tail", "help",
+}
+
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def daemon_call(socket_path: Path, cmd: str, args: dict, timeout: float = 30.0) -> dict:
+    payload = json.dumps({"id": 1, "cmd": cmd, "args": args}) + "\n"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(str(socket_path))
+        sock.sendall(payload.encode("utf-8"))
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise RuntimeError("daemon closed the connection")
+            buf += chunk
+    reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    if not reply.get("ok"):
+        raise RuntimeError(reply.get("error", "daemon error"))
+    return reply.get("result", {})
+
+
+class BridgeHandler(BaseHTTPRequestHandler):
+    server_version = "bunny-panel-bridge/0.1"
+    sys_version = ""
+    socket_path: Path = DEFAULT_SOCKET
+    ui_root: Path = DEFAULT_UI
+
+    # -- plumbing ----------------------------------------------------------
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in {"127.0.0.1", "localhost", "[::1]"}
+
+    def _common_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def _json(self, status: int, payload: dict) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self._common_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        LOG.debug("%s - %s", self.address_string(), fmt % args)
+
+    # -- static UI ---------------------------------------------------------
+    def _serve_static(self, route: str) -> None:
+        root = self.ui_root.resolve()
+        if not root.is_dir():
+            self._json(404, {"ok": False, "error": f"UI not installed at {root}"})
+            return
+
+        relative = "index.html" if route in {"", "/"} else unquote(route).lstrip("/")
+        if not relative or relative.endswith("/"):
+            relative += "index.html"
+        if relative.startswith("api/"):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+
+        target = (root / relative).resolve()
+        if target != root and root not in target.parents:
+            self._json(403, {"ok": False, "error": "path outside UI root"})
+            return
+        if target.is_dir():
+            target = (target / "index.html").resolve()
+            if target != root and root not in target.parents:
+                self._json(403, {"ok": False, "error": "path outside UI root"})
+                return
+        if not target.is_file():
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+
+        try:
+            body = target.read_bytes()
+        except OSError as exc:
+            self._json(500, {"ok": False, "error": f"read failed: {exc}"})
+            return
+
+        ctype = MIME.get(target.suffix.lower()) or mimetypes.guess_type(str(target))[0] \
+            or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self._common_headers()
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    # -- routes ------------------------------------------------------------
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self._json(403, {"ok": False, "error": "bad host"})
+            return
+        route = urlparse(self.path).path
+        if route == "/api/health":
+            self._json(200, {
+                "ok": True,
+                "bridge": "0.1",
+                "socket": str(self.socket_path),
+                "ui": str(self.ui_root),
+            })
+            return
+        if route == "/api/status":
+            self._proxy("status", {})
+            return
+        if route.startswith("/api/"):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        self._serve_static(route)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self._json(403, {"ok": False, "error": "bad host"})
+            return
+        if urlparse(self.path).path != "/api/call":
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_BODY:
+            self._json(413, {"ok": False, "error": "bad content length"})
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json(400, {"ok": False, "error": "invalid json"})
+            return
+        if not isinstance(body, dict):
+            self._json(400, {"ok": False, "error": "body must be an object"})
+            return
+        cmd = body.get("cmd")
+        args = body.get("args") or {}
+        if not isinstance(cmd, str) or not isinstance(args, dict):
+            self._json(400, {"ok": False, "error": "cmd must be a string, args an object"})
+            return
+        if cmd not in ALLOWED_COMMANDS:
+            self._json(403, {"ok": False, "error": f"command not bridged: {cmd}"})
+            return
+        self._proxy(cmd, args)
+
+    def _proxy(self, cmd: str, args: dict) -> None:
+        try:
+            result = daemon_call(self.socket_path, cmd, args)
+        except FileNotFoundError:
+            self._json(503, {"ok": False, "error": f"sessiond socket missing: {self.socket_path}"})
+        except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+            self._json(502, {"ok": False, "error": str(exc)})
+        else:
+            self._json(200, {"ok": True, "result": result})
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="loopback bridge for the Bunny OS Control Panel")
+    parser.add_argument("--port", type=int, default=8421)
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="bind address (loopback only by design)")
+    parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
+    parser.add_argument("--ui", type=Path, default=DEFAULT_UI,
+                        help="directory containing index.html")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
+                        format="%(levelname)s %(message)s", stream=sys.stderr)
+
+    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("refusing to bind a non-loopback address")
+    if not args.ui.is_dir():
+        LOG.warning("UI directory does not exist yet: %s", args.ui)
+
+    BridgeHandler.socket_path = args.socket
+    BridgeHandler.ui_root = args.ui
+    server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
+    server.daemon_threads = True
+    LOG.warning("bridge listening on http://%s:%s (ui %s, socket %s)",
+                args.host, args.port, args.ui, args.socket)
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

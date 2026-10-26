@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Switch to Desktop Mode
+Comment=KDE Plasma with the full studio toolchain
+Exec=/usr/local/bin/bunnyctl switch-mode desktop
+Icon=/opt/bunny/panel/ui/assets/bunny.svg
+Terminal=false
+Categories=Utility;
+Keywords=desktop;plasma;session;

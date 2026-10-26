@@ -1,0 +1,10 @@
+
+   (\_(\    Bunny OS @VERSION@ (@CHANNEL@)
+   (=' :')   Gaming Mode is the default. Desktop Mode is one button away.
+   (,(")(")  Press the Guide/PS button on a controller to open the Control Panel.
+
+   Install:  Bunny OS Control Panel -> Settings -> Install Bunny OS
+   Shell:    bunnyctl status | bunnyctl set-mode desktop | bunnyctl hint
+   Agent:    bunbun --help
+
+   Bun Bun is local-only. No telemetry. Multiplayer assist is opt-in.

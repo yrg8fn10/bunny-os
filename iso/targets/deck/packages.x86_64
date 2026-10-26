@@ -1,0 +1,34 @@
+# =============================================================================
+#  Packages added on top of iso/packages.x86_64 for the Steam Deck LCD target.
+#
+#  Everything here must exist in core/extra/multilib. Valve's kernel patches,
+#  steamdeck-dkms, ryzenadj, jupiter and similar AUR packages are deliberately
+#  NOT used: archiso cannot resolve the AUR, and the plain Arch kernel already
+#  drives the LCD Deck's Wi-Fi, GPU, audio, Bluetooth, touchscreen and controls.
+#
+#  Hardware notes (LCD model, 2022):
+#    Wi-Fi      10ec:c822  RTL8822CE      rtw88 + rtw88 firmware
+#    GPU        1002:163f  Van Gogh       amdgpu + linux-firmware-amdgpu
+#    Audio      1022:15e2  ACP            snd_pci_acp5x + alsa-ucm-conf
+#    Bluetooth  13d3:3555  RTL8822CE      btusb + rtw88 firmware
+#    Touch      2808:1015  FTS3528        hid-multitouch
+#    Controls   28de:1205  Valve Deck     hid-steam (lizard mode unless held)
+# =============================================================================
+
+# Firmware tooling. Stock Arch fwupd can inspect/update devices it knows about
+# (docks, SSDs, peripherals). Valve's Steam Deck BIOS/EC update path is NOT on
+# LVFS for stock fwupd, so it is not claimed here.
+fwupd
+
+# Sensor/IMU exposure and audio/controller diagnostics used by the test plan.
+iio-sensor-proxy
+alsa-utils
+evtest
+lm_sensors
+
+# GPU/display diagnostics: vulkaninfo, eglinfo, glxinfo.
+vulkan-tools
+mesa-utils
+
+# Regulatory database for the RTL8822CE Wi-Fi (pulls iw).
+wireless-regdb

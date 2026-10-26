@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-launcher — the only way the panel starts a game service.
+#
+#  The daemon allowlists the platform name, then runs this script as the
+#  desktop user.  Nothing here evaluates user input: game identifiers are
+#  validated before they reach a URI or argv.
+#
+#  Usage:
+#    bunny-launcher <platform> [--game-id ID] [--dry-run] [-- EXTRA...]
+#
+#  Platforms: steam epic heroic gog lutris retroarch desktop
+# =============================================================================
+set -Eeuo pipefail
+
+PLATFORM="${1:-}"
+[[ -n "${PLATFORM}" ]] || { echo "usage: bunny-launcher <platform> [--game-id ID]" >&2; exit 2; }
+shift
+
+GAME_ID=""
+DRY_RUN=0
+EXTRA=()
+while (( $# > 0 )); do
+  case "$1" in
+    --game-id) GAME_ID="${2:?--game-id needs a value}"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --) shift; EXTRA=("$@"); break ;;
+    *) echo "bunny-launcher: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+log() { printf 'bunny-launcher: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+run() {
+  if (( DRY_RUN )); then
+    printf 'would exec:'; printf ' %q' "$@"; printf '\n'
+    return 0
+  fi
+  log "exec: $*"
+  exec "$@"
+}
+
+flatpak_app() {
+  local app="$1"
+  if command -v flatpak >/dev/null 2>&1 && flatpak info "${app}" >/dev/null 2>&1; then
+    printf '%s\n' "${app}"
+    return 0
+  fi
+  return 1
+}
+
+steam_app_id() {
+  local id="$1"
+  id="${id#steam:}"
+  [[ "${id}" =~ ^[0-9]+$ ]] && printf '%s\n' "${id}"
+}
+
+# --- per-platform resolution -------------------------------------------------
+case "${PLATFORM}" in
+  steam)
+    if command -v steam >/dev/null 2>&1; then
+      if [[ -n "${GAME_ID}" ]]; then
+        APP="$(steam_app_id "${GAME_ID}")" || die "invalid Steam game id: ${GAME_ID}"
+        run steam "steam://rungameid/${APP}"
+      else
+        run steam -bigpicture
+      fi
+    elif APP="$(flatpak_app com.valvesoftware.Steam)"; then
+      if [[ -n "${GAME_ID}" ]]; then
+        APPID="$(steam_app_id "${GAME_ID}")" || die "invalid Steam game id: ${GAME_ID}"
+        run flatpak run "${APP}" "steam://rungameid/${APPID}"
+      else
+        run flatpak run "${APP}" -bigpicture
+      fi
+    else
+      die "Steam is not installed. Open Platforms to set it up."
+    fi
+    ;;
+
+  epic|gog)
+    # Both stores are delivered through Heroic; Bunny OS never bundles a
+    # second, password-collecting launcher.
+    if command -v heroic >/dev/null 2>&1; then
+      run heroic "${EXTRA[@]}"
+    elif APP="$(flatpak_app com.heroicgameslauncher.hgl)"; then
+      run flatpak run "${APP}" "${EXTRA[@]}"
+    else
+      die "Heroic is not installed; it provides both Epic and GOG."
+    fi
+    ;;
+
+  heroic)
+    if command -v heroic >/dev/null 2>&1; then
+      run heroic "${EXTRA[@]}"
+    elif APP="$(flatpak_app com.heroicgameslauncher.hgl)"; then
+      run flatpak run "${APP}" "${EXTRA[@]}"
+    else
+      die "Heroic is not installed."
+    fi
+    ;;
+
+  lutris)
+    if command -v lutris >/dev/null 2>&1; then
+      if [[ -n "${GAME_ID}" ]]; then
+        run lutris "lutris:rungame/${GAME_ID}"
+      else
+        run lutris
+      fi
+    elif APP="$(flatpak_app net.lutris.Lutris)"; then
+      if [[ -n "${GAME_ID}" ]]; then
+        run flatpak run "${APP}" "lutris:rungame/${GAME_ID}"
+      else
+        run flatpak run "${APP}"
+      fi
+    else
+      die "Lutris is not installed."
+    fi
+    ;;
+
+  retroarch)
+    if command -v retroarch >/dev/null 2>&1; then
+      run retroarch
+    elif APP="$(flatpak_app org.libretro.RetroArch)"; then
+      run flatpak run "${APP}"
+    else
+      die "RetroArch is not installed."
+    fi
+    ;;
+
+  desktop)
+    # Switching sessions is a daemon job; the launcher just asks politely.
+    command -v bunnyctl >/dev/null 2>&1 || die "bunnyctl is missing"
+    run bunnyctl switch-mode desktop
+    ;;
+
+  *)
+    die "unknown platform '${PLATFORM}' (steam|epic|heroic|gog|lutris|retroarch|desktop)"
+    ;;
+esac

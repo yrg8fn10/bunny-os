@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-health — collect a small, local-only health snapshot.
+#  Written to /var/log/bunny/health.json and readable in the panel's
+#  Settings -> Troubleshooting pane. No telemetry, ever.
+# =============================================================================
+set -Eeuo pipefail
+
+OUT_DIR="/var/log/bunny"
+OUT="${OUT_DIR}/health.json"
+mkdir -p "${OUT_DIR}"
+
+json_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+ROOT_USE="$(df -P / | awk 'NR==2 {print $5}' | tr -d '%')"
+MEM_TOTAL="$(awk '/MemTotal/ {print $2}' /proc/meminfo)"
+MEM_AVAIL="$(awk '/MemAvailable/ {print $2}' /proc/meminfo)"
+GPU_DRIVER="$(lspci -nnk 2>/dev/null | awk '/VGA|3D/ {found=1} found && /Kernel driver in use/ {print $NF; exit}')"
+SESSION_MODE='{}'
+if [[ -f /var/lib/bunny/state.json ]]; then
+  SESSION_MODE="$(tr -d '\n' < /var/lib/bunny/state.json 2>/dev/null || echo '{}')"
+fi
+AGENT_HTTP="$(curl -fsS --max-time 1.5 http://127.0.0.1:8422/health 2>/dev/null || echo '{"status":"offline"}')"
+FAILED_UNITS="$(systemctl --failed --no-legend --plain 2>/dev/null | wc -l)"
+JOURNAL_ERRS="$(journalctl -p 3 -b --no-legend 2>/dev/null | wc -l)"
+GAMESCOPE="$(pgrep -c gamescope 2>/dev/null || echo 0)"
+
+cat > "${OUT}.tmp" <<JSON
+{
+  "generated_at": "$(date -u +%FT%TZ)",
+  "mode": ${SESSION_MODE},
+  "root_used_percent": ${ROOT_USE:-0},
+  "mem_total_kb": ${MEM_TOTAL:-0},
+  "mem_available_kb": ${MEM_AVAIL:-0},
+  "gpu_driver": "$(json_str "${GPU_DRIVER:-unknown}")",
+  "gamescope_processes": ${GAMESCOPE:-0},
+  "agent": ${AGENT_HTTP},
+  "failed_units": ${FAILED_UNITS:-0},
+  "journal_errors_this_boot": ${JOURNAL_ERRS:-0},
+  "checks": {
+    "disk_ok": $([[ "${ROOT_USE:-100}" -lt 92 ]] && echo true || echo false),
+    "agent_online": $(printf '%s' "${AGENT_HTTP}" | grep -q '"status"' && echo true || echo false),
+    "units_ok": $([[ "${FAILED_UNITS:-1}" -eq 0 ]] && echo true || echo false)
+  }
+}
+JSON
+
+mv "${OUT}.tmp" "${OUT}"
+chmod 0644 "${OUT}"
+echo "health written to ${OUT}"
+
+if [[ "${1:-}" == "--verbose" ]]; then
+  cat "${OUT}"
+fi

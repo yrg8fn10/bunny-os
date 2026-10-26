@@ -1,0 +1,150 @@
+name: build-iso
+
+# Bunny OS is built on Arch Linux because mkarchiso needs root, loop devices and
+# mount(2). GitHub-hosted runners can provide those inside a privileged
+# container; Docker Desktop on Windows/macOS usually cannot. This workflow is the
+# supported CI path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Build target profile"
+        type: choice
+        options:
+          - generic
+          - deck
+        default: generic
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Static verification (canonical)
+        run: python3 tools/verify.py --strict
+
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' f; do
+            bash -n "$f"
+          done < <(find . -path ./.git -prune -o -name '*.sh' -print0)
+          bash -n system/bin/bunny-session system/bin/bunny-panel \
+            system/bin/bunny-panel-bridge system/bin/bunnyctl \
+            system/bin/bunny-firstboot system/bin/bunny-update \
+            system/bin/bunny-health launchers/bin/bunny-launcher \
+            launchers/bin/bunny-platform-scan installer/bunny-install
+
+      - name: Python compile
+        run: python3 -m compileall -q bunbun/bunbun system/lib tools
+
+      - name: Bun Bun tests (offline, stdlib only)
+        working-directory: bunbun
+        run: python3 -m unittest discover -s tests -t . -v
+
+      - name: JSON parse
+        run: |
+          set -euo pipefail
+          find . -path ./.git -prune -o -name '*.json' -print0 |
+            xargs -0 -n1 python3 -m json.tool >/dev/null
+
+  build:
+    name: build installer ISO
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      BUNNY_TARGET: ${{ github.event.inputs.target || 'generic' }}
+    container:
+      image: archlinux:latest
+      options: --privileged
+    timeout-minutes: 90
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed \
+            archiso squashfs-tools libisoburn libarchive openssl \
+            python git make dosfstools mtools
+
+      - uses: actions/checkout@v4
+
+      - name: Build ISO
+        run: |
+          set -euo pipefail
+          TARGET_ARGS=()
+          if [ "${BUNNY_TARGET}" != "generic" ]; then
+            TARGET_ARGS=(--target "${BUNNY_TARGET}")
+          fi
+          ./build_bunny_os_iso.sh --jobs "$(nproc)" "${TARGET_ARGS[@]}"
+          ISO_FILE="$(find out -maxdepth 1 -type f -name '*.iso' -print -quit)"
+          test -n "${ISO_FILE}"
+          test -s "${ISO_FILE}"
+          test -s "${ISO_FILE}.sha256"
+          test -s out/build-manifest.json
+          ( cd out && sha256sum -c "$(basename "${ISO_FILE}").sha256" )
+          ls -lh out/
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BunnyOS-${{ github.event.inputs.target || 'generic' }}-${{ github.run_number }}
+          path: |
+            out/*.iso
+            out/*.iso.sha256
+            out/build-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            build/build-plan.txt
+            build/archiso-work/build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: BunnyOS-${{ github.event.inputs.target || 'generic' }}-${{ github.run_number }}
+          path: dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --title "Bunny OS ${GITHUB_REF_NAME#v}" \
+              --generate-notes
+          fi

@@ -1,0 +1,39 @@
+[Unit]
+Description=Bunny OS Session & Settings Daemon
+Documentation=file:///usr/share/doc/bunny-os/SESSIONS.md
+After=dbus.service local-fs.target
+Before=sddm.service
+Wants=dbus.service
+ConditionPathExists=/etc/bunny/settings.json
+PartOf=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/bunny/bunny_sessiond.py
+Restart=always
+RestartSec=1s
+RuntimeDirectory=bunny
+RuntimeDirectoryMode=0750
+StateDirectory=bunny
+StateDirectoryMode=0755
+LogsDirectory=bunny
+LogsDirectoryMode=0755
+
+# Sandboxing: the daemon only needs its config, its state, and the DM.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/etc/bunny /etc/sddm.conf.d /var/lib/bunny /var/log/bunny /run/bunny
+
+[Install]
+WantedBy=graphical.target

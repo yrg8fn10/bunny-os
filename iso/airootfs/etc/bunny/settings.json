@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "session": {
+    "default_mode": "gaming",
+    "autologin": true,
+    "desktop_session": "bunny-desktop",
+    "gaming_session": "bunny-gaming"
+  },
+  "performance": {
+    "profile": "balanced",
+    "fps_cap": 60,
+    "tdp_watts": 15,
+    "gpu_driver": "auto",
+    "allow_overclock": false,
+    "mangohud": false
+  },
+  "audio": {
+    "sink": "auto",
+    "mic": "auto",
+    "latency_ms": 40,
+    "duck_media_for_voice": true,
+    "bunbun_volume": 0.85
+  },
+  "display": {
+    "resolution": "auto",
+    "refresh_hz": 60,
+    "hdr": false,
+    "scaling": "auto"
+  },
+  "ai": {
+    "enabled": true,
+    "voice_enabled": true,
+    "voice": "bunny-default",
+    "hint_level": "gentle",
+    "commentary": true,
+    "coop_opt_in": false,
+    "coop_mode": "invite-only",
+    "screen_vision": false,
+    "memory_enabled": true,
+    "kid_safe": true
+  },
+  "updates": {
+    "channel": "stable",
+    "auto_check": true
+  },
+  "privacy": {
+    "local_only": true,
+    "telemetry": false
+  }
+}

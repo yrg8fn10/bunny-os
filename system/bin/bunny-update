@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-update — channel-aware system update.
+#
+#  Bunny OS ships an image-based core (OSTree) with a writable /home and
+#  /var.  If the system was booted from an OSTree deployment we do an atomic
+#  A/B upgrade; otherwise (e.g. developer install from pacstrap) we fall back
+#  to a normal pacman run and say so loudly.
+#
+#  Usage: bunny-update [--check] [--channel stable|beta|dev] [--yes]
+# =============================================================================
+set -Eeuo pipefail
+
+CHANNEL="stable"
+CHECK_ONLY=0
+ASSUME_YES=0
+
+while (( $# > 0 )); do
+  case "$1" in
+    --check)   CHECK_ONLY=1; shift ;;
+    --channel) CHANNEL="${2:?}"; shift 2 ;;
+    --yes|-y)  ASSUME_YES=1; shift ;;
+    --help|-h) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "bunny-update: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+SETTINGS="/etc/bunny/settings.json"
+if [[ -f "${SETTINGS}" ]]; then
+  CHANNEL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["updates"]["channel"])' \
+    "${SETTINGS}" 2>/dev/null || echo "${CHANNEL}")"
+fi
+
+log() { printf '[bunny-update] %s\n' "$*"; }
+die() { printf '[bunny-update] ERROR: %s\n' "$*" >&2; exit 1; }
+
+[[ "${EUID}" -eq 0 ]] || die "must run as root"
+
+if [[ -f /run/ostree-booted ]]; then
+  log "image-based system detected (OSTree)"
+  case "${CHANNEL}" in
+    stable) REMOTE="bunnyos-stable" ;;
+    beta)   REMOTE="bunnyos-beta" ;;
+    dev)    REMOTE="bunnyos-dev" ;;
+    *) die "unknown channel ${CHANNEL}" ;;
+  esac
+  command -v ostree >/dev/null || die "ostree missing from the image"
+
+  if ! ostree remote list | grep -qx "${REMOTE}"; then
+    log "configuring remote ${REMOTE}"
+    ostree remote add --if-not-exists --no-gpg-verify "${REMOTE}" \
+      "https://updates.bunnyos.invalid/${CHANNEL}" || die "cannot add remote"
+  fi
+
+  if (( CHECK_ONLY )); then
+    ostree admin upgrade --preview
+    exit 0
+  fi
+  ostree admin upgrade
+  log "new deployment staged; reboot to activate (old image kept for rollback)"
+  exit 0
+fi
+
+log "WARNING: no OSTree deployment found — this looks like a developer install."
+log "         Falling back to pacman. This is NOT atomic and has no rollback."
+if (( CHECK_ONLY )); then
+  pacman -Qu || true
+  exit 0
+fi
+
+if (( ASSUME_YES == 0 )); then
+  read -r -p "Run a full system upgrade now? [y/N] " reply
+  [[ "${reply}" =~ ^[Yy]$ ]] || exit 1
+fi
+
+pacman -Syu --noconfirm
+log "upgrade complete; reboot recommended"

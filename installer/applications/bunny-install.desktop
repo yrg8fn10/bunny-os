@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install Bunny OS
+Comment=Erase a disk and install Bunny OS (UEFI)
+Exec=pkexec /usr/local/bin/bunny-install
+Icon=/opt/bunny/panel/ui/assets/bunny.svg
+Terminal=true
+Categories=System;
+Keywords=install;setup;bunny;

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Bunny OS update check
+Documentation=file:///usr/share/doc/bunny-os/BUILD.md
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=6h
+Persistent=true
+Unit=bunny-update.service
+
+[Install]
+WantedBy=timers.target

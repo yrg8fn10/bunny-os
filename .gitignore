@@ -1,0 +1,32 @@
+# Build artifacts
+/build/
+/out/
+*.iso
+*.iso.sha256
+*.iso.sig
+*.part
+
+# AI model weights / voices (fetched, never committed)
+vendor/models/
+vendor/voices/
+*.onnx
+*.onnx.json
+
+# Local runtime state
+.bunny/
+*.sqlite
+*.sqlite3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+node_modules/
+target/
+dist/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

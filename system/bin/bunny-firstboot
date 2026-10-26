@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-firstboot — one-shot provisioning for a fresh install or live boot.
+#
+#  Design rules:
+#    * Never block the login: the unit runs After=network-online.target but the
+#      graphical session does not wait for it.
+#    * Every step is idempotent and failure-tolerant (flatpak needs network).
+#    * The completion marker lives in /var/lib/bunny so a rolled-back root
+#      filesystem re-runs provisioning.
+# =============================================================================
+set -Eeuo pipefail
+
+STATE_DIR="/var/lib/bunny"
+MARKER="${STATE_DIR}/.firstboot-done"
+LOG="/var/log/bunny-firstboot.log"
+
+mkdir -p "${STATE_DIR}" "$(dirname "${LOG}")"
+exec > >(tee -a "${LOG}") 2>&1
+
+log()  { printf '[firstboot] %s\n' "$*"; }
+warn() { printf '[firstboot] WARN: %s\n' "$*" >&2; }
+
+log "starting $(date -u +%FT%TZ)"
+
+if [[ -f "${MARKER}" ]]; then
+  log "already provisioned"
+  exit 0
+fi
+
+# --- 1. Runtime directories -------------------------------------------------
+install -d -m 0755 /var/lib/bunny /var/log/bunny
+install -d -m 0750 /run/bunny
+chgrp bunny /run/bunny 2>/dev/null || true
+
+# --- 2. Sysctl / I/O tuning ------------------------------------------------
+cat > /etc/sysctl.d/90-bunny.conf <<'EOF'
+# Bunny OS gaming defaults
+vm.max_map_count = 2147483642
+fs.inotify.max_user_watches = 524288
+fs.inotify.max_user_instances = 1024
+kernel.split_lock_mitigate = 0
+net.core.netdev_max_backlog = 16384
+EOF
+sysctl --system >/dev/null 2>&1 || warn "sysctl reload failed"
+
+# --- 3. Flatpak stores ------------------------------------------------------
+# Steam comes from the Arch repos. Heroic / Lutris / RetroArch are Flatpaks
+# because their Arch packages live in the AUR and archiso cannot use the AUR.
+if command -v flatpak >/dev/null 2>&1; then
+  flatpak remote-add --if-not-exists --system flathub \
+    https://flathub.org/repo/flathub.flatpakrepo || warn "could not add flathub"
+
+  FLATPAKS=(
+    com.heroicgameslauncher.hgl
+    net.lutris.Lutris
+    org.libretro.RetroArch
+    org.videolan.VLC
+  )
+  for app in "${FLATPAKS[@]}"; do
+    if flatpak info --system "${app}" >/dev/null 2>&1; then
+      log "flatpak present: ${app}"
+      continue
+    fi
+    log "installing ${app}"
+    # Best effort: a handheld may be offline on first boot.
+    flatpak install --system -y --noninteractive flathub "${app}" \
+      || warn "flatpak install failed for ${app} (retry: flatpak install --system flathub ${app})"
+  done
+else
+  warn "flatpak not installed"
+fi
+
+# --- 4. Per-user defaults ---------------------------------------------------
+BUNNY_UID="$(id -u bunny 2>/dev/null || echo 1000)"
+BUNNY_HOME="$(getent passwd bunny | cut -d: -f6 || echo /home/bunny)"
+if [[ -d "${BUNNY_HOME}" ]]; then
+  install -d -o bunny -g bunny -m 0700 "${BUNNY_HOME}/.local/share/bunbun"
+  install -d -o bunny -g bunny -m 0755 "${BUNNY_HOME}/.config"
+  # Seed Bun Bun's on-disk settings once; the panel owns them afterwards.
+  if [[ ! -f "${BUNNY_HOME}/.config/bunbun.json" ]]; then
+    printf '{"memory": true, "local_only": true, "voice": "bunny-default"}\n' \
+      > "${BUNNY_HOME}/.config/bunbun.json"
+    chown bunny:bunny "${BUNNY_HOME}/.config/bunbun.json"
+  fi
+fi
+
+# --- 5. Audio: keep voice chat from fighting game audio ---------------------
+if command -v wpctl >/dev/null 2>&1; then
+  log "pipewire detected (uid ${BUNNY_UID})"
+else
+  warn "wpctl missing; check wireplumber"
+fi
+
+# --- 6. Snapshots (only on btrfs installs) ----------------------------------
+if command -v snapper >/dev/null 2>&1 && [[ "$(stat -f -c %T / 2>/dev/null)" == "btrfs" ]]; then
+  if ! snapper -c root list >/dev/null 2>&1; then
+    snapper --no-dbus -c root create-config / >/dev/null 2>&1 || warn "snapper config failed"
+  fi
+  systemctl enable snapper-timeline.timer snapper-cleanup.timer >/dev/null 2>&1 || true
+fi
+
+# --- 7. Done ---------------------------------------------------------------
+date -u +%FT%TZ > "${MARKER}"
+chmod 0644 "${MARKER}"
+log "provisioning complete"

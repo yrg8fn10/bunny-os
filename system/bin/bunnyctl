@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""bunnyctl — the single command-line front end to bunny-sessiond.
+
+Examples
+    bunnyctl status
+    bunnyctl switch-mode desktop
+    bunnyctl set-mode gaming            # applies on next login
+    bunnyctl set ai.hint_level=helpful ai.voice_enabled=true
+    bunnyctl agent restart
+    bunnyctl launch steam
+    bunnyctl library --refresh
+    bunnyctl update check
+    bunnyctl power reboot
+    bunnyctl input-agent enable --i-consent
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import socket
+import sys
+from pathlib import Path
+
+DEFAULT_SOCKET = Path(os.environ.get("BUNNY_SOCKET", "/run/bunny/sessiond.sock"))
+
+
+class DaemonError(RuntimeError):
+    pass
+
+
+def call(cmd: str, args: dict | None = None, socket_path: Path | None = None,
+         timeout: float = 30.0) -> dict:
+    path = socket_path or DEFAULT_SOCKET
+    if not path.exists():
+        raise DaemonError(
+            f"bunny-sessiond socket not found at {path}. "
+            "Start it with: sudo systemctl start bunny-sessiond"
+        )
+    payload = json.dumps({"id": 1, "cmd": cmd, "args": args or {}}) + "\n"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(str(path))
+        sock.sendall(payload.encode("utf-8"))
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise DaemonError("daemon closed the connection")
+            buf += chunk
+    reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    if not reply.get("ok"):
+        raise DaemonError(reply.get("error", "unknown daemon error"))
+    return reply.get("result", {})
+
+
+# ---------------------------------------------------------------------------
+def parse_value(raw: str):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+
+
+def build_patch(pairs: list[str]) -> dict:
+    patch: dict = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise SystemExit(f"expected key=value, got {pair!r}")
+        key, _, raw = pair.partition("=")
+        node = patch
+        parts = key.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = parse_value(raw)
+    return patch
+
+
+def pretty(result: dict) -> str:
+    settings = result.get("settings")
+    if isinstance(settings, dict):
+        return json.dumps(result, indent=2)
+    return json.dumps(result, indent=2)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="bunnyctl", description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--json", action="store_true", help="raw JSON (default)")
+    parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("status", help="session, settings and agent status")
+    sub.add_parser("sessions", help="available session names")
+
+    p_mode = sub.add_parser("set-mode", help="persist the default session mode")
+    p_mode.add_argument("mode", choices=["gaming", "desktop"])
+    p_switch = sub.add_parser("switch-mode", help="switch now (restarts SDDM)")
+    p_switch.add_argument("mode", choices=["gaming", "desktop"])
+
+    p_set = sub.add_parser("set", help="update settings, e.g. ai.hint_level=helpful")
+    p_set.add_argument("pairs", nargs="+", metavar="key=value")
+    p_set.add_argument("--confirm", help="consent token for opt-in settings")
+
+    p_launch = sub.add_parser("launch", help="start a platform through the allowlist")
+    p_launch.add_argument("platform", choices=["steam", "epic", "heroic", "gog", "lutris", "retroarch", "desktop"])
+
+    p_library = sub.add_parser("library", help="installed games (scanned on demand)")
+    p_library.add_argument("--refresh", action="store_true", help="ignore the two-minute cache")
+
+    p_update = sub.add_parser("update", help="check or stage a system update")
+    p_update.add_argument("action", nargs="?", default="check", choices=["check", "apply"])
+
+    p_agent = sub.add_parser("agent", help="control the Bun Bun user service")
+    p_agent.add_argument("action", nargs="?", default="status",
+                         choices=["start", "stop", "restart", "status"])
+
+    p_input = sub.add_parser("input-agent", help="enable/disable input injection (opt-in)")
+    p_input.add_argument("action", choices=["enable", "disable"])
+    p_input.add_argument("--i-consent", action="store_true",
+                         help="required to enable; confirms the player read the warning")
+
+    p_power = sub.add_parser("power", help="reboot, poweroff, logout, suspend")
+    p_power.add_argument("action", choices=["reboot", "poweroff", "logout", "suspend"])
+
+    sub.add_parser("installer", help="open the installer (live image only)")
+    p_audit = sub.add_parser("audit", help="recent privileged actions")
+    p_audit.add_argument("--lines", type=int, default=30)
+
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "status":
+            result = call("status", socket_path=args.socket)
+            return _print_status(result)
+        if args.command == "sessions":
+            status = call("status", socket_path=args.socket)
+            print(json.dumps(status.get("sessions", {}), indent=2))
+            return 0
+        if args.command == "library":
+            result = call("library", {"refresh": args.refresh}, args.socket)
+            if args.json:
+                print(json.dumps(result, indent=2))
+                return 0
+            games = result.get("games", [])
+            print(f"{len(games)} games ({result.get('source', 'unknown')} scan)")
+            for game in games:
+                platform = game.get("platform", "?")
+                title = game.get("title", "Untitled")
+                print(f"  {platform:<10} {title}")
+            for problem in result.get("errors", [])[:5]:
+                print(f"  ! {problem}", file=sys.stderr)
+            return 0
+        if args.command == "set-mode":
+            result = call("set-mode", {"mode": args.mode}, args.socket)
+        elif args.command == "switch-mode":
+            result = call("switch-mode", {"mode": args.mode}, args.socket)
+        elif args.command == "set":
+            result = call("set-settings",
+                          {"patch": build_patch(args.pairs), "confirm": args.confirm},
+                          args.socket)
+        elif args.command == "launch":
+            result = call("launch", {"platform": args.platform}, args.socket)
+        elif args.command == "update":
+            result = call("update", {"action": args.action}, args.socket)
+        elif args.command == "agent":
+            result = call("agent", {"action": args.action}, args.socket)
+        elif args.command == "input-agent":
+            payload = {"enable": args.action == "enable"}
+            if args.i_consent:
+                payload["confirm"] = "I AGREE"
+            result = call("input-agent", payload, args.socket)
+        elif args.command == "power":
+            result = call("power", {"action": args.action}, args.socket)
+        elif args.command == "installer":
+            result = call("installer", {}, args.socket)
+        elif args.command == "audit":
+            result = call("audit-tail", {"lines": args.lines}, args.socket)
+            for line in result.get("lines", []):
+                print(line)
+            return 0
+        else:  # pragma: no cover - argparse enforces this
+            parser.error("unknown command")
+
+        print(pretty(result))
+        return 0
+    except DaemonError as exc:
+        print(f"bunnyctl: {exc}", file=sys.stderr)
+        return 1
+    except ConnectionRefusedError:
+        print("bunnyctl: daemon refused the connection", file=sys.stderr)
+        return 1
+
+
+def _print_status(status: dict) -> int:
+    ai = status.get("settings", {}).get("ai", {})
+    agent = status.get("agent", {}).get("status", "unknown")
+    live = "live ISO" if status.get("live") else "installed"
+    print(f"Bunny OS sessiond {status.get('version', '?')}  ({live})")
+    print(f"  mode      : {status.get('mode')}  (next boot: {status.get('default_mode')})")
+    print(f"  session   : {status.get('mode_session')}")
+    print(f"  display   : {'sddm active' if status.get('display_manager_active') else 'sddm inactive'}")
+    print(f"  bun bun   : {agent}  voice={'on' if ai.get('voice_enabled') else 'off'} "
+          f"hints={ai.get('hint_level', '?')} coop={'on' if ai.get('coop_opt_in') else 'off'}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

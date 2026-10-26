@@ -1,0 +1,265 @@
+# Architecture
+
+Bunny OS is a controller-first Arch Linux derivative. It is deliberately small:
+a gaming session, a desktop session, one privileged broker, one local AI agent,
+and an archiso profile that ties them together.
+
+> **Status honesty.** The repository builds a real bootable image, but the
+> *immutable core* is only partially realised today. The installer creates a
+> Btrfs subvolume layout (`@`, `@home`, `@var`, `@snapshots`) and `bunny-update`
+> knows how to perform an atomic OSTree upgrade **when booted from an OSTree
+> deployment**. The current installer copies a pacman-managed root, so on a
+> fresh install updates fall back to `pacman -Syu` with a loud warning. See
+> [ROADMAP](#roadmap--known-gaps).
+
+## 1. Layers
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                       Gaming Mode (session: bunny-gaming)            │
+│  gamescope / cage  ──►  Bunny OS Control Panel (fullscreen web UI)   │
+│                              │            │                          │
+│                    native Tauri shell  or  loopback bridge           │
+│                              └──────┬─────┘                          │
+├─────────────────────────────────────┼────────────────────────────────┤
+│                    bunny-sessiond (root, AF_UNIX)                    │
+│   mode switch · settings schema · launch allowlist · power · audit   │
+├─────────────────────────────────────┼────────────────────────────────┤
+│              Bun Bun agent (user, 127.0.0.1:8422, HTTP+SSE)          │
+│   perception · MAM policy · hints · TTS · co-op · memory             │
+├─────────────────────────────────────┼────────────────────────────────┤
+│   Steam · Heroic (Epic/GOG) · Lutris · RetroArch · KDE Plasma         │
+├─────────────────────────────────────┼────────────────────────────────┤
+│   Arch Linux packages · Btrfs subvolumes · systemd units             │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Session entry points
+
+| File | Role |
+|------|------|
+| `system/wayland-sessions/bunny-gaming.desktop` | SDDM entry for Gaming Mode |
+| `system/wayland-sessions/bunny-desktop.desktop` | SDDM entry for KDE Plasma |
+| `system/bin/bunny-session` | starts gamescope → panel, or Plasma |
+| `system/bin/bunny-panel` | chooses native shell → Chromium kiosk → dev server |
+| `system/bin/bunny-panel-bridge` | serves the UI and proxies JSON to the daemon |
+
+Gaming Mode is the default. `bunny-session` exports the usual Wayland and
+Proton environment, then `exec`s the panel inside `gamescope`. If gamescope is
+missing it falls back to `cage`, then to a bare panel for development.
+
+### Control Panel
+
+`control-panel/ui` is dependency-free ES modules. There is no build step and no
+node_modules: the image ships source that any WebKit/Chromium can load.
+
+* `js/nav.js` — geometric focus navigation for D-pad, stick and keyboard.
+* `js/gamepad.js` — standard-mapping polling with repeat handling.
+* `js/api.js` — picks native, bridge or mock at startup.
+* `js/views/*` — pure markup; every action is delegated to `app.js`.
+* `js/mock.js` — mirrors the daemon's command and settings schema offline.
+
+The UI is a client. It does not read `/etc/bunny/settings.json` directly, does
+not call systemd, and does not know how to partition a disk.
+
+### Privilege boundary
+
+`bunny-sessiond` is the only long-running root process owned by Bunny OS.
+
+* Socket `/run/bunny/sessiond.sock`, mode `0660`, owner `root:bunny`.
+* `SO_PEERCRED` on every connection; uid 0 and members of `bunny` or `wheel`
+  may connect. Everything else is refused before a command is parsed.
+* Two command classes: read-only (`status`, `get-settings`, `library`, `help`,
+  `ping`) and state-changing (mode switch, settings, launch, power, agent,
+  installer, update, audit). State-changing commands are appended to
+  `/var/log/bunny/sessiond-audit.log`.
+* Settings are validated against an explicit schema. Unknown keys are errors.
+  Opt-in keys (`ai.coop_opt_in`, `ai.screen_vision`,
+  `performance.allow_overclock`) additionally require a confirmation token.
+* `launch` resolves a platform name against an allowlist and executes
+  `/usr/local/bin/bunny-launcher`. No shell, no user-supplied argv.
+* `check_invariants()` repairs contradictory settings (for example telemetry on
+  while local-only is on) and reports what it changed.
+
+The panel proves nothing to the daemon except its uid. That is intentional: a
+compromised renderer cannot gain root, because the daemon does not trust it.
+
+### Bun Bun agent
+
+`bunbun/` is Python 3.10+ standard library only. It binds loopback, refuses
+non-loopback Host headers, and runs as the desktop user via a systemd user unit.
+
+```
+perception (ACF / Heroic / watcher) → MAM engine → policy gate → outcomes
+                                        │             │
+                                        │             ├─ TTS pipeline (local)
+                                        │             ├─ overlay SSE bus
+                                        │             └─ co-op / input client
+                                        └─ memory (SQLite, local)
+```
+
+The policy engine is the safety boundary: anti-cheat titles, competitive modes,
+and un-allowlisted games cannot receive hints that inject input or join lobbies.
+See [BUNBUN.md](BUNBUN.md).
+
+## 2. Boot flow
+
+```
+UEFI/BIOS
+  └─ systemd-boot / syslinux
+       └─ archiso (live) or installed root
+            └─ systemd graphical.target
+                 └─ sddm.service
+                      ├─ autologin session=bunny-gaming → bunny-session → gamescope → panel
+                      └─ autologin session=bunny-desktop → startplasma-wayland
+```
+
+First boot on an installed system runs `bunny-firstboot.service` (oneshot):
+Flatpak remotes, zram, sysctl tuning, per-user defaults. Live media skips the
+parts that would write to the USB stick.
+
+`bunny-health.timer` writes a small JSON health snapshot under
+`/var/lib/bunny/` for support; it does not upload anything.
+
+### Target profiles
+
+`iso/targets/<name>/` overlays the generic profile at build time. A target can
+replace boot entries, append packages and ship `airootfs` files. The build copies
+its `target.conf` to `/etc/bunny/target.conf` and writes `/etc/bunny/target`
+(`generic` or the target id). `bunny-session` reads the gamescope arguments from
+that file, and `bunny-install` appends `BUNNY_KERNEL_ARGS` to the installed boot
+entry. The current profile is `deck` (Steam Deck LCD, 1280x800); see
+[STEAMDECK.md](STEAMDECK.md). Detection is explicit, not automatic: a generic
+image installed on a Deck stays at 1080p.
+
+## 3. Filesystem layout
+
+| Path | Contents |
+|------|----------|
+| `/usr/local/bin/` | `bunny-session`, `bunny-panel`, `bunny-panel-bridge`, `bunnyctl`, launchers, installer |
+| `/usr/local/lib/bunny/` | `bunny_sessiond.py`, `bunny_input_agent.py` |
+| `/opt/bunny/panel/ui/` | the web UI served by the bridge / native shell |
+| `/opt/bunbun/` | Bun Bun agent source and data |
+| `/etc/bunny/` | `settings.json`, `session.conf`, `target.conf`/`target` (target builds), `build-info.json` |
+| `/etc/systemd/system/` | sessiond, firstboot, update, health, input-agent |
+| `/var/lib/bunny/` | state, memory, health snapshots |
+| `/var/log/bunny/` | audit log |
+
+Installed disks use:
+
+```
+p1  512 MiB  FAT32   ESP, systemd-boot
+p2  rest     Btrfs   @  /            compress=zstd,noatime
+                     @home /home
+                     @var  /var
+                     @snapshots /.snapshots
+```
+
+## 4. Settings model
+
+Settings are a nested JSON object with a dotted-key schema. Defaults live in
+`system/lib/bunny_sessiond.py`; the image ships the same values in
+`iso/airootfs/etc/bunny/settings.json`.
+
+```
+session.default_mode        gaming | desktop
+session.autologin           bool
+performance.profile         quiet | balanced | performance | custom
+performance.fps_cap         30..240
+performance.tdp_watts       4..60
+performance.gpu_driver      auto | mesa | nvidia | amdgpu-pro
+performance.allow_overclock bool   (consent)
+display.resolution          auto | 1280x800 | 1920x1080 | 2560x1600 | 3840x2160
+display.refresh_hz          30..165
+audio.*                     sink/mic/latency/duck/volume
+ai.*                        voice, hints, commentary, co-op, vision, memory, kid-safe
+updates.*                   channel, auto_check
+privacy.*                   local_only, telemetry
+```
+
+The panel edits through `set-settings`; the daemon validates, writes atomically
+(temp file + `os.replace`), then repairs invariants before returning the tree.
+
+### What actually takes effect in v0.1
+
+Honesty matters more than a long feature list here:
+
+| Group | Status |
+|-------|--------|
+| `session.*` | **Enforced.** Default mode and autologin own the SDDM drop-in; `switch-mode` restarts the display manager. |
+| `ai.*` | **Enforced** as far as the agent implements it: enable, voice, hints, commentary, co-op opt-in, memory. `ai.screen_vision` is a reserved key and changes nothing. |
+| `updates.*`, `privacy.*` | Read by `bunny-update` and the daemon invariant pass. |
+| `performance.*`, `display.*`, `audio.*` | **Persisted preferences.** No TDP, clock, fan, driver, PipeWire or MangoHud writes happen yet. |
+
+The Tweaks view labels these as preferences so a saved value is never presented
+as a live hardware change. Adding real backends is a per-device project; the
+schema and validation already exist.
+
+Mode changes are separate: `set-mode` persists the default and rewrites SDDM's
+autologin drop-in (an empty `User=` disables autologin), while `switch-mode`
+restarts `sddm.service` after the same write. A failure halfway through is safe:
+the next login still uses the last complete drop-in.
+
+## 5. Image build
+
+`build_bunny_os_iso.sh` is the single entry point:
+
+1. **preflight** — Linux, Arch, root, `mkarchiso`, tools, free space, network.
+2. **stage** — copy `iso/`, apply the optional `iso/targets/<name>/` overlay
+   (boot entries, packages, airootfs files), overlay system/bunbun/UI/launchers/
+   installer, render `@VERSION@`/`@BUILD_ID@`/`@BUILD_DATE@`/`@CHANNEL@`, write
+   `build-info.json` and the target marker.
+3. **validate** — shell syntax, JSON, Python compile, unit sections, desktop
+   entries, package hygiene, target profiles, line endings, secrets, staged tree.
+4. **mkarchiso** — squashfs + ISO.
+5. **collect** — rename to `out/BunnyOS-installer.iso` (or
+   `BunnyOS-<target>-installer.iso`), SHA-256, optional GPG.
+6. **manifest** — `out/build-manifest.json` with version, channel, target, sizes,
+   package count and git revision.
+
+`--dry-run` performs 1–3 and writes `build/build-plan.txt`; it never claims to
+have produced an image. `--docker` hands off to `scripts/build-docker.sh`.
+See [BUILD.md](BUILD.md).
+
+## 6. Trust boundaries and failure modes
+
+| Boundary | Control | Failure behaviour |
+|----------|---------|-------------------|
+| Renderer → daemon | peer uid + allowlist + schema | command refused, audit entry, UI toast |
+| Daemon → systemd | fixed argv, no shell | error returned, no partial settings write |
+| Bun Bun → game | policy gate + allowlist + consent | hint suppressed or lobby refused |
+| Bun Bun → input agent | root token + live PID + `uinput` | masked unit, no input path |
+| Bridge → network | loopback bind + Host check | 403 on rebind attempts |
+| Installer → disk | explicit `ERASE`, live-media guard, UEFI only | refuses before writing |
+
+The panel is allowed to be wrong (offline, stale, mock). The daemon and the
+installer are not: both fail closed.
+
+## 7. Roadmap / known gaps
+
+* **True immutable core.** The Btrfs layout and `bunny-update` OSTree path are
+  in place, but the installer does not yet create an OSTree deployment. Until
+  then, treat installed systems as conventional Arch with snapshots.
+* **Encrypted installs.** LUKS is not implemented; the installer says so.
+* **BIOS installs.** UEFI only in v0.1.
+* **Native shell packaging.** `tauri build` bundling is disabled; the image
+  ships a plain binary when one is built.
+* **GPU vendor tooling.** No TDP, clock or fan write is implemented in v0.1.
+  Settings are persisted as preferences and never presented as applied.
+* **Accessibility.** Focus and scaling work; a screen-reader pass and colour
+  contrast audit are still open.
+
+## 8. Repository map
+
+```
+build_bunny_os_iso.sh      pipeline and artefact contract
+iso/                       archiso profile, packages, airootfs seed
+system/                    daemon, session scripts, units, wayland sessions
+bunbun/                    Bun Bun agent (stdlib Python) + tests
+control-panel/             web UI + optional Tauri shell
+launchers/                 allowlisted launchers and library scanner
+installer/                 guided whole-disk installer
+scripts/                   preflight, stage, validate, docker, flash, sign
+tools/                     verify.py (canonical) and verify.ps1 (Windows)
+docs/                      this directory
+```

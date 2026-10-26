@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-platform-scan — read-only library probe.
+#
+#  Emits one JSON document describing which game services are installed and
+#  which games are locally available.  It never writes, never logs in, and
+#  never contacts a store: manifests are read from the user's own directories.
+#
+#  Usage: bunny-platform-scan [--json] [--home DIR]
+# =============================================================================
+set -Eeuo pipefail
+
+if ! command -v python3 >/dev/null 2>&1; then
+  printf '%s\n' '{"games":[],"platforms":[],"errors":["python3 is not installed"],"source":"unavailable","scanned_at":null}'
+  exit 0
+fi
+
+exec python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import re
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+JSON_ONLY = "--json" in sys.argv
+
+home = Path(os.path.expanduser("~"))
+args = sys.argv[1:]
+if "--home" in args:
+    index = args.index("--home")
+    if index + 1 < len(args):
+        home = Path(args[index + 1]).expanduser()
+    else:
+        print("bunny-platform-scan: --home needs a value", file=sys.stderr)
+        raise SystemExit(2)
+
+errors: list[str] = []
+games: dict[tuple[str, str], dict] = {}
+
+
+def note(message: str) -> None:
+    errors.append(message)
+
+
+def add_game(platform: str, game: dict) -> None:
+    gid = str(game.get("game_id") or game.get("id") or "")
+    if not gid:
+        return
+    key = (platform, gid)
+    if key in games:
+        return
+    game["platform"] = platform
+    game["game_id"] = gid
+    game.setdefault("size_bytes", 0)
+    game.setdefault("last_played_days", 0)
+    game.setdefault("source", platform)
+    games[key] = game
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text("utf-8", errors="replace")
+    except OSError as exc:
+        note(f"{path}: {exc}")
+        return ""
+
+
+def vdf_field(text: str, key: str) -> str | None:
+    match = re.search(r'"%s"\s+"([^"]*)"' % re.escape(key), text)
+    return match.group(1) if match else None
+
+
+# ---------------------------------------------------------------------------
+# Steam (native, Flatpak, and any extra library folders)
+# ---------------------------------------------------------------------------
+steam_roots = [
+    home / ".steam" / "steam",
+    home / ".steam" / "root",
+    home / ".local" / "share" / "Steam",
+    home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+]
+steam_found = False
+library_paths: set[Path] = set()
+
+for root in steam_roots:
+    if not root.exists():
+        continue
+    steam_found = True
+    library_paths.add(root)
+    folders = root / "steamapps" / "libraryfolders.vdf"
+    if folders.is_file():
+        text = read_text(folders)
+        for raw in re.findall(r'"path"\s+"([^"]+)"', text):
+            library_paths.add(Path(raw))
+
+for library in sorted(library_paths):
+    apps = library / "steamapps"
+    if not apps.is_dir():
+        continue
+    for manifest in sorted(apps.glob("appmanifest_*.acf")):
+        text = read_text(manifest)
+        appid = vdf_field(text, "appid")
+        name = vdf_field(text, "name")
+        if not appid or not name:
+            continue
+        try:
+            size = int(vdf_field(text, "SizeOnDisk") or 0)
+        except ValueError:
+            size = 0
+        try:
+            last = int(vdf_field(text, "LastPlayed") or 0)
+        except ValueError:
+            last = 0
+        days = max(0, int((time.time() - last) / 86400)) if last else 0
+        add_game("steam", {
+            "game_id": f"steam:{appid}",
+            "title": name,
+            "size_bytes": size,
+            "last_played_days": days,
+            "install_dir": str(apps / "common"),
+        })
+
+# ---------------------------------------------------------------------------
+# Heroic (Epic via Legendary, GOG)
+# ---------------------------------------------------------------------------
+heroic_dirs = [
+    home / ".config" / "heroic",
+    home / ".var" / "app" / "com.heroicgameslauncher.hgl" / "config" / "heroic",
+]
+heroic_found = False
+for heroic in heroic_dirs:
+    if not heroic.is_dir():
+        continue
+    heroic_found = True
+
+    legendary = heroic / "legendaryConfig" / "legendary" / "installed.json"
+    if legendary.is_file():
+        try:
+            payload = json.loads(read_text(legendary) or "{}")
+        except json.JSONDecodeError:
+            note(f"{legendary}: invalid JSON")
+            payload = {}
+        if isinstance(payload, dict):
+            for app_name, meta in payload.items():
+                if not isinstance(meta, dict):
+                    continue
+                title = meta.get("title") or app_name
+                add_game("epic", {
+                    "game_id": f"epic:{app_name}",
+                    "title": title,
+                    "size_bytes": int(meta.get("install_size") or 0),
+                    "last_played_days": 0,
+                    "install_dir": meta.get("install_path"),
+                })
+
+    gog = heroic / "gog_store" / "installed.json"
+    if gog.is_file():
+        try:
+            payload = json.loads(read_text(gog) or "{}")
+        except json.JSONDecodeError:
+            note(f"{gog}: invalid JSON")
+            payload = {}
+        if isinstance(payload, dict):
+            for app_id, meta in payload.items():
+                if not isinstance(meta, dict):
+                    continue
+                title = meta.get("title") or meta.get("appName") or app_id
+                add_game("gog", {
+                    "game_id": f"gog:{app_id}",
+                    "title": title,
+                    "size_bytes": int(meta.get("install_size") or 0),
+                    "last_played_days": 0,
+                    "install_dir": meta.get("install_path"),
+                })
+
+# ---------------------------------------------------------------------------
+# Lutris (SQLite, read-only)
+# ---------------------------------------------------------------------------
+lutris_dbs = [
+    home / ".local" / "share" / "lutris" / "pga.db",
+    home / ".var" / "app" / "net.lutris.Lutris" / "data" / "lutris" / "pga.db",
+]
+lutris_found = False
+for db in lutris_dbs:
+    if not db.is_file():
+        continue
+    lutris_found = True
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        columns = {row[1] for row in con.execute("PRAGMA table_info(games)")}
+        wanted = [c for c in ("id", "name", "slug", "runner", "directory", "lastplayed") if c in columns]
+        if "name" not in columns:
+            note(f"{db}: unexpected schema")
+            con.close()
+            continue
+        rows = con.execute(f"SELECT {', '.join(wanted)} FROM games").fetchall()
+        con.close()
+    except sqlite3.Error as exc:
+        note(f"{db}: {exc}")
+        continue
+    for row in rows:
+        record = dict(zip(wanted, row))
+        name = record.get("name") or "Lutris game"
+        ident = record.get("id") or record.get("slug") or name
+        add_game("lutris", {
+            "game_id": f"lutris:{ident}",
+            "title": name,
+            "size_bytes": 0,
+            "last_played_days": 0,
+            "runner": record.get("runner"),
+            "install_dir": record.get("directory"),
+        })
+
+# ---------------------------------------------------------------------------
+# RetroArch playlists
+# ---------------------------------------------------------------------------
+retro_dirs = [
+    home / ".config" / "retroarch" / "playlists",
+    home / ".var" / "app" / "org.libretro.RetroArch" / "config" / "retroarch" / "playlists",
+]
+retro_found = False
+for playlists in retro_dirs:
+    if not playlists.is_dir():
+        continue
+    retro_found = True
+    for playlist in sorted(playlists.glob("*.lpl")):
+        try:
+            payload = json.loads(read_text(playlist) or "{}")
+        except json.JSONDecodeError:
+            note(f"{playlist}: invalid JSON")
+            continue
+        items = payload.get("items") if isinstance(payload, dict) else None
+        count = len(items) if isinstance(items, list) else 0
+        if not count:
+            continue
+        title = playlist.stem.replace("_", " ").strip() or "RetroArch"
+        add_game("retroarch", {
+            "game_id": f"retroarch:{playlist.stem}",
+            "title": title,
+            "size_bytes": 0,
+            "last_played_days": 0,
+            "entries": count,
+        })
+
+# ---------------------------------------------------------------------------
+# Platform availability
+# ---------------------------------------------------------------------------
+desktop_found = any(
+    Path(p).exists() for p in ("/usr/bin/startplasma-wayland", "/usr/bin/startplasma-x11")
+)
+
+platforms = [
+    {
+        "id": "steam", "name": "Steam", "installed": steam_found, "kind": "native",
+        "note": "Proton, Big Picture and controller profiles are ready." if steam_found
+                else "Install Steam from the live image's package set.",
+    },
+    {
+        "id": "epic", "name": "Epic Games", "installed": heroic_found, "kind": "flatpak",
+        "note": "Provided by Heroic. Legendary handles installs, Bunny OS stores no password.",
+    },
+    {
+        "id": "gog", "name": "GOG", "installed": heroic_found, "kind": "flatpak",
+        "note": "GOG library appears inside Heroic.",
+    },
+    {
+        "id": "lutris", "name": "Lutris", "installed": lutris_found, "kind": "flatpak",
+        "note": "Optional: emulators, non-Steam shortcuts and Wine titles.",
+    },
+    {
+        "id": "retroarch", "name": "RetroArch", "installed": retro_found, "kind": "flatpak",
+        "note": "Controller-first emulation frontend.",
+    },
+    {
+        "id": "desktop", "name": "Desktop Mode", "installed": desktop_found, "kind": "native",
+        "note": "KDE Plasma with the full studio toolchain.",
+    },
+]
+
+ordered = sorted(games.values(), key=lambda g: (g.get("last_played_days") or 0, g.get("title") or ""))
+document = {
+    "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "source": "live",
+    "games": ordered,
+    "platforms": platforms,
+    "errors": errors[:20],
+}
+
+if JSON_ONLY:
+    json.dump(document, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+else:
+    print(f"{len(ordered)} games found on this device")
+    for game in ordered:
+        print(f"  {game['platform']:<10} {game['title']}")
+    for problem in document["errors"]:
+        print(f"  ! {problem}", file=sys.stderr)
+PY

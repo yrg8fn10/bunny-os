@@ -1,0 +1,124 @@
+/* Bunny OS Control Panel — foundation: tokens, reset, ambience, motion. */
+
+:root {
+  --pink: #ff8ac7;
+  --pink-soft: #ffc2e2;
+  --pink-deep: #d4518f;
+  --mint: #8ef0c6;
+  --blue: #8ecdf7;
+  --lilac: #c7b3ff;
+  --ink: #0a0710;
+  --ink-2: #120c19;
+  --paper: #fff6fb;
+  --muted: #b9a8c4;
+  --muted-2: #7f7189;
+  --card: rgba(255, 255, 255, 0.055);
+  --card-strong: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --shadow: 0 22px 60px rgba(0, 0, 0, 0.45);
+  --radius: 26px;
+  --radius-sm: 16px;
+  --pad: clamp(18px, 2.2vw, 34px);
+  --ease: cubic-bezier(0.22, 0.9, 0.24, 1);
+  --font: "Segoe UI Variable Display", "Segoe UI", Inter, "Noto Sans", system-ui, -apple-system, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+  cursor: default;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+img, svg { display: block; }
+h1, h2, h3, h4, p { margin: 0; }
+kbd { font-family: inherit; }
+
+.icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+}
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ---------------------------------------------------------------- ambience */
+.ambient { position: fixed; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.ambient::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(255, 138, 199, 0.16), transparent 60%),
+    radial-gradient(90% 70% at 100% 100%, rgba(142, 205, 247, 0.10), transparent 60%),
+    linear-gradient(180deg, #0b0711 0%, #0a0710 55%, #0d0813 100%);
+}
+
+.blob {
+  position: absolute;
+  width: 46vw;
+  height: 46vw;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.35;
+  animation: drift 26s var(--ease) infinite alternate;
+}
+.blob--pink { background: #ff69b4; top: -18vw; left: -8vw; }
+.blob--mint { background: #4fe0a8; bottom: -22vw; right: -10vw; animation-delay: -9s; opacity: 0.18; }
+.blob--blue { background: #5aa8ff; top: 30%; left: 55%; width: 30vw; height: 30vw; opacity: 0.12; animation-delay: -15s; }
+
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(4vw, 3vh, 0) scale(1.12); }
+}
+
+/* ------------------------------------------------------------------ motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+::selection { background: var(--pink); color: #1a0712; }
+
+/* Thin, controller-friendly scrollbars (Chromium kiosk + WebKitGTK). */
+.scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scroll-behavior: smooth;
+}
+.scroll::-webkit-scrollbar { width: 10px; }
+.scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}

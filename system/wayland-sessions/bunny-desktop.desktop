@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Bunny OS Desktop Mode
+Comment=KDE Plasma desktop for studio work
+Exec=/usr/local/bin/bunny-session desktop
+TryExec=/usr/local/bin/bunny-session
+Type=Application
+DesktopNames=BunnyOS
+Keywords=desktop;plasma;

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Minimum permissions for the Bunny OS Control Panel window. The shell only exposes one custom command, bunny_call, which the daemon re-authorises.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

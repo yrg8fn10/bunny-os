@@ -1,0 +1,8 @@
+[Unit]
+Description=Bunny OS Health Snapshot
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bunny-health
+Nice=15

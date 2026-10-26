@@ -1,0 +1,28 @@
+[Unit]
+Description=Bun Bun Input Injection Agent (opt-in, root)
+Documentation=file:///usr/share/doc/bunny-os/SAFETY-AND-LEGAL.md
+# Masked at build time. Enabling requires an explicit, confirmed
+# `bunnyctl input-agent enable --i-consent`, which writes the token file.
+ConditionPathExists=/etc/bunny/allow-input-agent
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/bunny/bunny_input_agent.py
+Restart=on-failure
+RestartSec=5s
+
+# Device access is scoped to uinput and nothing else.
+DeviceAllow=/dev/uinput rw
+PrivateDevices=no
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/run/bunny /var/log/bunny
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

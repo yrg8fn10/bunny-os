@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-session — the graphical session entry point.
+#
+#  SDDM starts this as the Wayland session (see
+#  /usr/share/wayland-sessions/bunny-gaming.desktop).  It is the bridge between
+#  "display manager logged in" and "the player sees the Control Panel".
+#
+#    bunny-session gaming    gamescope (or cage fallback) + Control Panel
+#    bunny-session desktop   Plasma Wayland
+#
+#  Everything is logged to the journal, so `journalctl -b -u sddm` shows it.
+# =============================================================================
+set -Eeuo pipefail
+
+CONF="/etc/bunny/session.conf"
+MODE="${1:-gaming}"
+
+# shellcheck disable=SC1090
+[[ -r "${CONF}" ]] && source "${CONF}"
+
+# Per-target overrides written by scripts/stage-profile.sh (for example
+# 1280x800 gamescope args on a Steam Deck). The file is root-owned and only
+# contains BUNNY_* assignments.
+TARGET_CONF="/etc/bunny/target.conf"
+# shellcheck disable=SC1090
+[[ -r "${TARGET_CONF}" ]] && source "${TARGET_CONF}"
+
+log() { printf 'bunny-session: %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+log "target=${BUNNY_TARGET_ID:-generic} mode=${MODE} wayland=${WAYLAND_DISPLAY:-unset}"
+
+export XDG_CURRENT_DESKTOP="BunnyOS"
+export XDG_SESSION_DESKTOP="bunny-${MODE}"
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_CLASS=user
+export QT_QPA_PLATFORM=wayland
+export MOZ_ENABLE_WAYLAND=1
+export STEAM_VIDEO_FLAG=1
+export BUNNY_SESSION_MODE="${MODE}"
+
+case "${MODE}" in
+  gaming)
+    # Performance posture for the gaming session.  The user's tweaks override
+    # these through bunny-sessiond; these are just sane defaults.
+    export MANGOHUD=0
+    export vkbasalt_enabled="${vkbasalt_enabled:-0}"
+    export PROTON_ENABLE_NVAPI=1
+    export DXVK_ASYNC="${DXVK_ASYNC:-1}"
+
+    PANEL="${BUNNY_PANEL_BIN:-/usr/local/bin/bunny-panel}"
+    [[ -x "${PANEL}" ]] || die "control panel missing at ${PANEL}"
+
+    if [[ "${BUNNY_USE_GAMESCOPE:-1}" == "1" ]] && command -v gamescope >/dev/null 2>&1; then
+      # shellcheck disable=SC2086
+      read -r -a GS_ARGS <<< "${BUNNY_GAMESCOPE_ARGS:--W 1920 -H 1080 -r 60}"
+      log "starting gamescope ${GS_ARGS[*]}"
+      exec gamescope "${GS_ARGS[@]}" -- "${PANEL}" --kiosk
+    elif command -v cage >/dev/null 2>&1; then
+      log "gamescope unavailable; falling back to cage kiosk"
+      exec cage -- "${PANEL}" --kiosk
+    else
+      log "no gamescope and no cage; starting the panel bare (dev mode)"
+      exec "${PANEL}" --kiosk
+    fi
+    ;;
+
+  desktop)
+    if command -v startplasma-wayland >/dev/null 2>&1; then
+      exec startplasma-wayland
+    elif command -v startplasma-x11 >/dev/null 2>&1; then
+      export XDG_SESSION_TYPE=x11
+      exec startplasma-x11
+    else
+      die "KDE Plasma is not installed (plasma-meta)"
+    fi
+    ;;
+
+  *)
+    die "unknown session mode '${MODE}' (expected gaming|desktop)"
+    ;;
+esac

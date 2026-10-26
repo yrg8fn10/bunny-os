@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Bunny OS health snapshot
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Unit=bunny-health.service
+
+[Install]
+WantedBy=timers.target

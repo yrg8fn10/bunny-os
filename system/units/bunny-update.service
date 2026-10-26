@@ -1,0 +1,15 @@
+[Unit]
+Description=Bunny OS System Update
+Documentation=file:///usr/share/doc/bunny-os/BUILD.md
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/bunny/settings.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bunny-update --yes
+TimeoutStartSec=90min
+Nice=19
+IOSchedulingClass=idle
+# The update must survive a logout; it must not block login.
+KillMode=process

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bunny OS Control Panel
+GenericName=Game Launcher
+Comment=Controller-first library, tweaks and Bun Bun
+Exec=/usr/local/bin/bunny-panel
+Icon=/opt/bunny/panel/ui/assets/bunny.svg
+Terminal=false
+Categories=Game;Utility;
+Keywords=gaming;steam;library;controller;
+StartupNotify=true

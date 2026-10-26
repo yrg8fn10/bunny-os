@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "hints": [
+    {
+      "id": "generic-explore",
+      "game": "*",
+      "level": "gentle",
+      "tags": ["exploration"],
+      "where": "behind the big landmark you passed",
+      "text": "There's a little side path near the last big landmark. Bunny senses a secret!",
+      "secret": true
+    },
+    {
+      "id": "generic-save",
+      "game": "*",
+      "level": "gentle",
+      "tags": ["safety"],
+      "where": "the save point you skipped",
+      "text": "You skipped a save point back there. Might be worth a hop back?",
+      "secret": false
+    },
+    {
+      "id": "generic-break",
+      "game": "*",
+      "level": "gentle",
+      "tags": ["wellbeing"],
+      "where": "a comfy chair",
+      "text": "You've been going a while. Stretch those paws!",
+      "secret": false
+    },
+    {
+      "id": "generic-listen",
+      "game": "*",
+      "level": "helpful",
+      "tags": ["puzzle"],
+      "where": "the sound cue in the room",
+      "text": "The music changes when you face the right way. Follow the chime!",
+      "secret": false
+    },
+    {
+      "id": "demo-lantern",
+      "game": "demo",
+      "level": "gentle",
+      "tags": ["puzzle", "secret"],
+      "where": "the third lantern by the pond",
+      "text": "Light the three lanterns by the pond in one go. The middle one hides a chest!",
+      "secret": true
+    }
+  ]
+}

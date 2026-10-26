@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-panel — launch the Bunny OS Control Panel.
+#
+#  Resolution order:
+#    1. Native Tauri shell  (/usr/lib/bunny/panel-shell)  — fastest, real
+#       unix-socket access, no browser overhead.
+#    2. Chromium kiosk over the local bridge              — works on a fresh
+#       image before the Rust shell has been built.
+#    3. Static preview server (developer machines only).
+#
+#  Flags: --kiosk (fullscreen, no cursor chrome), --dev (serve the UI on :8421)
+# =============================================================================
+set -Eeuo pipefail
+
+UI_DIR="/opt/bunny/panel/ui"
+UI_FILE="${UI_DIR}/index.html"
+NATIVE_SHELL="${BUNNY_PANEL_SHELL:-/usr/lib/bunny/panel-shell}"
+BRIDGE="${BUNNY_PANEL_BRIDGE:-/usr/local/bin/bunny-panel-bridge}"
+PORT="${BUNNY_PANEL_PORT:-8421}"
+KIOSK=0
+DEV=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --kiosk) KIOSK=1 ;;
+    --dev)   DEV=1 ;;
+    *) echo "bunny-panel: ignoring unknown argument ${arg}" >&2 ;;
+  esac
+done
+
+log() { printf 'bunny-panel: %s\n' "$*" >&2; }
+
+if (( DEV )); then
+  command -v python3 >/dev/null || { log "python3 required for --dev"; exit 1; }
+  log "serving ${UI_DIR} on http://127.0.0.1:${PORT}"
+  exec python3 -m http.server "${PORT}" --bind 127.0.0.1 --directory "${UI_DIR}"
+fi
+
+[[ -f "${UI_FILE}" ]] || { log "missing UI at ${UI_FILE}"; exit 1; }
+
+# 1. Native shell -----------------------------------------------------------
+if [[ -x "${NATIVE_SHELL}" ]]; then
+  log "using native shell ${NATIVE_SHELL}"
+  exec "${NATIVE_SHELL}" --ui "${UI_FILE}"
+fi
+
+CHROMIUM=""
+for candidate in chromium chromium-browser google-chrome-stable; do
+  if command -v "${candidate}" >/dev/null 2>&1; then CHROMIUM="${candidate}"; break; fi
+done
+
+if [[ -z "${CHROMIUM}" ]]; then
+  log "cannot launch: no panel shell and no Chromium"
+  exit 1
+fi
+
+# Child processes are tracked explicitly. The bridge must outlive only this
+# script, so it is killed from the exit trap rather than orphaned by exec.
+BRIDGE_PID=""
+STATIC_PID=""
+
+cleanup() {
+  local pid
+  for pid in "${BRIDGE_PID}" "${STATIC_PID}"; do
+    [[ -n "${pid}" ]] || continue
+    kill "${pid}" 2>/dev/null || true
+    wait "${pid}" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT INT TERM
+
+PANEL_URL=""
+
+health_ok() {
+  curl -fsS "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1
+}
+
+wait_for_health() {
+  local _
+  for _ in $(seq 1 40); do
+    health_ok && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# 2. Local bridge -----------------------------------------------------------
+# The bridge is both the JSON endpoint and a static server. Serving over
+# http:// keeps ES modules, fetch() and EventSource on one sane origin, which
+# file:// cannot do.
+if health_ok; then
+  log "reusing bridge already listening on 127.0.0.1:${PORT}"
+  PANEL_URL="http://127.0.0.1:${PORT}/"
+elif [[ -x "${BRIDGE}" ]]; then
+  log "starting local bridge on 127.0.0.1:${PORT}"
+  "${BRIDGE}" --port "${PORT}" --ui "${UI_DIR}" &
+  BRIDGE_PID=$!
+  if wait_for_health; then
+    PANEL_URL="http://127.0.0.1:${PORT}/"
+  else
+    log "bridge did not become healthy; falling back to the static preview"
+    kill "${BRIDGE_PID}" 2>/dev/null || true
+    wait "${BRIDGE_PID}" 2>/dev/null || true
+    BRIDGE_PID=""
+  fi
+else
+  log "bridge not installed; panel will run in offline preview mode"
+fi
+
+# 3. Static fallback --------------------------------------------------------
+# Without a bridge the panel still renders (mock backend), but it needs an
+# HTTP origin for ES modules. Never fall back to file://.
+if [[ -z "${PANEL_URL}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    log "serving static preview on 127.0.0.1:${PORT}"
+    python3 -m http.server "${PORT}" --bind 127.0.0.1 --directory "${UI_DIR}" &
+    STATIC_PID=$!
+    for _ in $(seq 1 40); do
+      curl -fsS "http://127.0.0.1:${PORT}/index.html" >/dev/null 2>&1 && break
+      sleep 0.1
+    done
+    PANEL_URL="http://127.0.0.1:${PORT}/"
+  else
+    log "cannot serve the UI: bridge missing and python3 unavailable"
+    exit 1
+  fi
+fi
+
+# shellcheck disable=SC2054  # Chromium feature lists use commas, not array separators
+CHROME_ARGS=(
+  --app="${PANEL_URL}"
+  --no-first-run
+  --no-default-browser-check
+  --disable-features=Translate,MediaRouter
+  --password-store=basic
+  --enable-features=UseOzonePlatform
+  --ozone-platform=wayland
+  --touch-events=enabled
+  --overscroll-history-navigation=0
+  --disable-pinch
+)
+if (( KIOSK )); then
+  CHROME_ARGS+=(--kiosk --start-fullscreen)
+fi
+
+log "using ${CHROMIUM} (kiosk=${KIOSK}) at ${PANEL_URL}"
+
+# Run the browser in the foreground so the trap can reap the bridge when the
+# kiosk session ends. `exec` here would orphan every background child.
+set +e
+"${CHROMIUM}" "${CHROME_ARGS[@]}"
+STATUS=$?
+set -e
+
+exit "${STATUS}"

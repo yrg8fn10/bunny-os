@@ -1,0 +1,19 @@
+[Unit]
+Description=Bun Bun — Bunny OS AI Companion (MAM Engine)
+Documentation=file:///opt/bunbun/README.md
+PartOf=graphical-session.target
+After=graphical-session.target pipewire.service
+Wants=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/bunbun/bunbun/service.py --port 8422 --data-dir %h/.local/share/bunbun
+Environment=PYTHONUNBUFFERED=1
+Environment=BUNBUN_LOCAL_ONLY=1
+Restart=on-failure
+RestartSec=3s
+# The agent must never keep the session from shutting down.
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=default.target

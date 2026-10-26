@@ -1,0 +1,2 @@
+# Live-image convenience only. The installed system uses normal sudo rules.
+bunny ALL=(ALL:ALL) NOPASSWD: ALL

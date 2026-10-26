@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Bunny OS Gaming Mode
+Comment=Controller-first Control Panel powered by gamescope
+Exec=/usr/local/bin/bunny-session gaming
+TryExec=/usr/local/bin/bunny-session
+Type=Application
+DesktopNames=BunnyOS
+Keywords=gaming;steam;console;handheld;

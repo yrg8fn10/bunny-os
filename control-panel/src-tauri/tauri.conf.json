@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Bunny OS Control Panel",
+  "version": "0.1.0",
+  "identifier": "os.bunny.panel",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Bunny OS",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": true,
+        "decorations": false,
+        "transparent": false,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:8422 ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "category": "Game",
+    "shortDescription": "Controller-first gaming panel for Bunny OS",
+    "longDescription": "Bunny OS Control Panel: library, tweaks, sessions and the Bun Bun companion.",
+    "copyright": "MIT licensed"
+  }
+}

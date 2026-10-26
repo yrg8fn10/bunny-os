@@ -1,0 +1,107 @@
+# Bunny OS — explicit package set for the live image.
+# Everything here MUST exist in core/extra/multilib (archiso cannot use the AUR).
+# AUR-only apps (Heroic, Lutris, RetroArch) are installed as Flatpaks at first boot.
+# Comment format: one package per line, '#' starts a comment.
+
+# --- base system -----------------------------------------------------------
+base
+linux
+linux-firmware
+amd-ucode
+intel-ucode
+mkinitcpio
+systemd
+systemd-sysvcompat
+sudo
+polkit
+dbus
+bash
+coreutils
+util-linux
+kmod
+btrfs-progs
+dosfstools
+e2fsprogs
+exfatprogs
+ntfs-3g
+cryptsetup
+snapper
+ostree
+zram-generator
+efibootmgr
+git
+nano
+less
+htop
+pciutils
+usbutils
+openssl
+curl
+
+# --- session / display manager --------------------------------------------
+sddm
+plasma-meta
+plasma-nm
+plasma-pa
+konsole
+dolphin
+kate
+ark
+bluedevil
+gamescope
+cage
+chromium
+xdg-desktop-portal
+xdg-desktop-portal-kde
+xdg-user-dirs
+accountsservice
+
+# --- gaming stack ----------------------------------------------------------
+steam
+gamemode
+lib32-gamemode
+mangohud
+lib32-mangohud
+vulkan-radeon
+lib32-vulkan-radeon
+vulkan-intel
+mesa
+lib32-mesa
+lib32-libglvnd
+lib32-pipewire
+
+# --- audio / video ---------------------------------------------------------
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+alsa-ucm-conf
+sof-firmware
+qpwgraph
+lib32-libpulse
+
+# --- networking / bluetooth ------------------------------------------------
+networkmanager
+bluez
+bluez-utils
+wpa_supplicant
+iwd
+
+# --- fonts / theme ---------------------------------------------------------
+noto-fonts
+noto-fonts-emoji
+ttf-dejavu
+papirus-icon-theme
+
+# --- bunny stack -----------------------------------------------------------
+python
+python-pip
+flatpak
+sqlite
+ffmpeg
+tesseract
+tesseract-data-eng
+
+# --- power / performance ---------------------------------------------------
+power-profiles-daemon
+thermald
