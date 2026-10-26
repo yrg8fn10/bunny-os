@@ -229,6 +229,14 @@ for bootdir in "${STAGE}/efiboot" "${STAGE}/syslinux" "${STAGE}/grub"; do
     "BUILD_DATE=${BUILD_DATE}" \
     "CHANNEL=${CHANNEL}"
 done
+# profiledef.sh drives the ISO filename via iso_version, and it sits at the stage
+# root — outside both airootfs and the boot trees rendered above. render_tokens
+# accepts a single file path, so this renders exactly that one file.
+render_tokens "${STAGE}/profiledef.sh" \
+  "VERSION=${VERSION}" \
+  "BUILD_ID=${BUILD_ID}" \
+  "BUILD_DATE=${BUILD_DATE}" \
+  "CHANNEL=${CHANNEL}"
 
 # 6. Build provenance ------------------------------------------------------
 PROVENANCE_ARGS=(

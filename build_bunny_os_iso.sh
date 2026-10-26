@@ -156,6 +156,10 @@ START_TS="$(date +%s)"
 # Never let a stale image from a previous run be mistaken for this build.
 rm -f "${OUT_DIR}"/*.iso "${OUT_DIR}"/*.iso.sha256 2>/dev/null || true
 log_info "mkarchiso -v -w ${ARCHISO_WORK} -o ${OUT_DIR} ${STAGE}"
+# Both directories must exist before the pipeline starts: the tee writes
+# build.log into the work dir, and under pipefail a failing tee would mark the
+# whole build failed even when mkarchiso produced a good ISO.
+mkdir -p "${OUT_DIR}" "${ARCHISO_WORK}"
 if ! mkarchiso -v -w "${ARCHISO_WORK}" -o "${OUT_DIR}" "${STAGE}" 2>&1 | tee "${ARCHISO_WORK}/build.log"; then
   die "mkarchiso failed — see ${ARCHISO_WORK}/build.log"
 fi
