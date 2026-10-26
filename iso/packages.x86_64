@@ -105,3 +105,6 @@ tesseract-data-eng
 # --- power / performance ---------------------------------------------------
 power-profiles-daemon
 thermald
+
+# --- bootloader (BIOS/legacy path; UEFI uses systemd-boot) ------------------
+syslinux
