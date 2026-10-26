@@ -25,6 +25,7 @@ ASSUME_YES=0
 DRY_RUN=0
 TARGET="/mnt"
 PASSWORD="${BUNNY_PASSWORD:-}"
+KEEP_HOME_FROM=""
 
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
@@ -37,6 +38,7 @@ while (( $# > 0 )); do
     --user)     USERNAME="${2:?}"; shift 2 ;;
     --timezone) TIMEZONE="${2:?}"; shift 2 ;;
     --locale)   LOCALE="${2:?}"; shift 2 ;;
+    --keep-home-from) KEEP_HOME_FROM="${2:?--keep-home-from needs a disk}"; shift 2 ;;
     --yes|-y)   ASSUME_YES=1; shift ;;
     --dry-run)  DRY_RUN=1; shift ;;
     --help|-h)  usage; exit 0 ;;
@@ -220,6 +222,31 @@ rsync -aAXH --numeric-ids --info=progress2 "${EXCLUDES[@]}" / "${TARGET}/"
 mkdir -p "${TARGET}/proc" "${TARGET}/sys" "${TARGET}/dev" "${TARGET}/run" "${TARGET}/tmp"
 chmod 1777 "${TARGET}/tmp"
 
+# ---------------------------------------------------------------------------
+# Optional: carry the old /home across (drive swap / migration)
+# ---------------------------------------------------------------------------
+if [[ -n "${KEEP_HOME_FROM}" ]]; then
+  KEEP_HOME_FROM="$(readlink -f "${KEEP_HOME_FROM}")"
+  [[ -b "${KEEP_HOME_FROM}" ]] || die "migration source ${KEEP_HOME_FROM} is not a block device"
+  [[ "${KEEP_HOME_FROM}" != "${DISK}" ]] || die "source and destination are the same disk"
+  OLD_ROOT="$(part "${KEEP_HOME_FROM}" 2)"
+  [[ -b "${OLD_ROOT}" ]] || die "${OLD_ROOT} does not exist; cannot read the old home"
+  OLD_MNT="$(mktemp -d /run/bunny-oldhome.XXXXXX)"
+  # Prefer the @home subvolume; fall back to a plain filesystem.
+  if ! mount -o ro,subvol=@home "${OLD_ROOT}" "${OLD_MNT}" 2>/dev/null; then
+    mount -o ro "${OLD_ROOT}" "${OLD_MNT}" \
+      || die "cannot mount ${OLD_ROOT} read-only"
+  fi
+  OLD_HOME="${OLD_MNT}/home"
+  [[ -d "${OLD_HOME}" ]] || OLD_HOME="${OLD_MNT}"
+  log "migrating home from ${KEEP_HOME_FROM}"
+  rsync -aHAX --numeric-ids --info=progress2 "${OLD_HOME}/" "${TARGET}/home/" \
+    || warn "home migration finished with errors; check /home on the new disk"
+  umount "${OLD_MNT}"
+  rmdir "${OLD_MNT}" 2>/dev/null || true
+  log "home migration complete"
+fi
+
 rm -f "${TARGET}/etc/fstab"
 genfstab -U "${TARGET}" >> "${TARGET}/etc/fstab"
 cp -f /etc/resolv.conf "${TARGET}/etc/resolv.conf"
@@ -291,6 +318,13 @@ systemctl enable sddm.service
 systemctl set-default graphical.target
 systemctl enable bunny-sessiond.service
 systemctl enable bunny-firstboot.service
+# The account exists, so the interactive provisioner must stay dormant. The
+# marker is what stops bunny-setup from holding tty1 on every boot.
+install -d -m 0755 /var/lib/bunny
+date -u +%FT%TZ > /var/lib/bunny/.account-ready
+chmod 0644 /var/lib/bunny/.account-ready
+systemctl enable bunny-setup.service
+systemctl enable bunny-recovery.service
 systemctl enable bunny-update.timer
 systemctl enable bunny-health.timer
 systemctl enable NetworkManager.service
@@ -300,6 +334,11 @@ systemctl enable fstrim.timer
 systemctl enable systemd-timesyncd.service
 systemctl --global enable bunny-bunbun.service 2>/dev/null || true
 systemctl mask bunny-input-agent.service 2>/dev/null || true
+
+# A handheld is offline more often than not. Anything ordered after these waits
+# for a default route, which can add 90 seconds or hang forever on a train.
+systemctl mask NetworkManager-wait-online.service \
+               systemd-networkd-wait-online.service 2>/dev/null || true
 
 # A new machine-id; the live one must not be shared between installs.
 rm -f /etc/machine-id
@@ -327,6 +366,13 @@ timeout 3
 console-mode max
 editor no
 LOADER
+  # Second entry: same kernel, no graphical target, straight into the menu.
+  cat > /boot/loader/entries/bunny-os-recovery.conf <<ENTRY2
+title   Bunny OS (Recovery and Maintenance)
+linux   /\${KERNEL}
+initrd  \${INITRD}
+options root=UUID=${ROOT_UUID} rootflags=subvol=@ rw quiet splash loglevel=3 bunny.recovery=1 systemd.unit=multi-user.target ${EXTRA_KERNEL_ARGS}
+ENTRY2
   bootctl --path=/boot install
 else
   echo "WARNING: no kernel found in /boot; systemd-boot was not configured" >&2

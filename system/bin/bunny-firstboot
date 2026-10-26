@@ -3,11 +3,13 @@
 #  bunny-firstboot — one-shot provisioning for a fresh install or live boot.
 #
 #  Design rules:
-#    * Never block the login: the unit runs After=network-online.target but the
-#      graphical session does not wait for it.
+#    * Never block the login: the unit is ordered after network.target but does
+#      not wait for connectivity, and every network step is time-boxed.
 #    * Every step is idempotent and failure-tolerant (flatpak needs network).
 #    * The completion marker lives in /var/lib/bunny so a rolled-back root
 #      filesystem re-runs provisioning.
+#    * No hard-coded account name: the first human user is whatever exists on
+#      this machine, which bunny-account-setup has already guaranteed.
 # =============================================================================
 set -Eeuo pipefail
 
@@ -27,6 +29,23 @@ if [[ -f "${MARKER}" ]]; then
   log "already provisioned"
   exit 0
 fi
+
+# --- 0. Make sure somebody can log in ---------------------------------------
+if [[ -x /usr/local/bin/bunny-account-setup ]]; then
+  /usr/local/bin/bunny-account-setup || warn "account setup failed"
+fi
+
+FIRST_USER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1; exit }')"
+log "desktop user: ${FIRST_USER:-<none>}"
+
+online() {
+  # Bounded check: never let a missing link stall provisioning.
+  if command -v nm-online >/dev/null 2>&1; then
+    timeout 20 nm-online -q -t 15 >/dev/null 2>&1
+  else
+    timeout 5 ping -c1 -W2 1.1.1.1 >/dev/null 2>&1
+  fi
+}
 
 # --- 1. Runtime directories -------------------------------------------------
 install -d -m 0755 /var/lib/bunny /var/log/bunny
@@ -48,8 +67,15 @@ sysctl --system >/dev/null 2>&1 || warn "sysctl reload failed"
 # Steam comes from the Arch repos. Heroic / Lutris / RetroArch are Flatpaks
 # because their Arch packages live in the AUR and archiso cannot use the AUR.
 if command -v flatpak >/dev/null 2>&1; then
-  flatpak remote-add --if-not-exists --system flathub \
-    https://flathub.org/repo/flathub.flatpakrepo || warn "could not add flathub"
+  if ! online; then
+    warn "no network link after 20s - skipping Flatpak setup"
+    warn "flatpaks install on the next boot once online"
+    SKIP_FLATPAK=1
+  else
+    SKIP_FLATPAK=0
+    flatpak remote-add --if-not-exists --system flathub \
+      https://flathub.org/repo/flathub.flatpakrepo || warn "could not add flathub"
+  fi
 
   FLATPAKS=(
     com.heroicgameslauncher.hgl
@@ -58,36 +84,44 @@ if command -v flatpak >/dev/null 2>&1; then
     org.videolan.VLC
   )
   for app in "${FLATPAKS[@]}"; do
+    (( SKIP_FLATPAK )) && break
     if flatpak info --system "${app}" >/dev/null 2>&1; then
       log "flatpak present: ${app}"
       continue
     fi
     log "installing ${app}"
-    # Best effort: a handheld may be offline on first boot.
-    flatpak install --system -y --noninteractive flathub "${app}" \
+    # Best effort and time-boxed: a handheld may be offline or on a captive
+    # portal, and a stuck download must not hold the boot open.
+    timeout 180 flatpak install --system -y --noninteractive flathub "${app}" \
       || warn "flatpak install failed for ${app} (retry: flatpak install --system flathub ${app})"
   done
+  if (( SKIP_FLATPAK )); then
+    # Nothing was attempted; leave the marker absent so the next boot retries.
+    warn "deferring provisioning to the next online boot"
+    exit 0
+  fi
 else
   warn "flatpak not installed"
 fi
 
 # --- 4. Per-user defaults ---------------------------------------------------
-BUNNY_UID="$(id -u bunny 2>/dev/null || echo 1000)"
-BUNNY_HOME="$(getent passwd bunny | cut -d: -f6 || echo /home/bunny)"
-if [[ -d "${BUNNY_HOME}" ]]; then
-  install -d -o bunny -g bunny -m 0700 "${BUNNY_HOME}/.local/share/bunbun"
-  install -d -o bunny -g bunny -m 0755 "${BUNNY_HOME}/.config"
+if [[ -n "${FIRST_USER}" ]]; then
+  BUNNY_HOME="$(getent passwd "${FIRST_USER}" | cut -d: -f6)"
+  install -d -o "${FIRST_USER}" -g "${FIRST_USER}" -m 0700 "${BUNNY_HOME}/.local/share/bunbun"
+  install -d -o "${FIRST_USER}" -g "${FIRST_USER}" -m 0755 "${BUNNY_HOME}/.config"
   # Seed Bun Bun's on-disk settings once; the panel owns them afterwards.
   if [[ ! -f "${BUNNY_HOME}/.config/bunbun.json" ]]; then
     printf '{"memory": true, "local_only": true, "voice": "bunny-default"}\n' \
       > "${BUNNY_HOME}/.config/bunbun.json"
-    chown bunny:bunny "${BUNNY_HOME}/.config/bunbun.json"
+    chown "${FIRST_USER}:${FIRST_USER}" "${BUNNY_HOME}/.config/bunbun.json"
   fi
+else
+  warn "no desktop user found - skipping per-user defaults"
 fi
 
 # --- 5. Audio: keep voice chat from fighting game audio ---------------------
 if command -v wpctl >/dev/null 2>&1; then
-  log "pipewire detected (uid ${BUNNY_UID})"
+  log "pipewire detected (user ${FIRST_USER:-none})"
 else
   warn "wpctl missing; check wireplumber"
 fi

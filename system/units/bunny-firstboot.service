@@ -2,15 +2,19 @@
 Description=Bunny OS First Boot Provisioning
 Documentation=file:///usr/share/doc/bunny-os/BUILD.md
 ConditionPathExists=!/var/lib/bunny/.firstboot-done
-After=network-online.target
-Wants=network-online.target
+# Ordering only: this must be ordered after the network is *up*, but it must
+# never wait for it to be *online*. A handheld that boots on a train has no
+# link, and network-online.target can take 90s or hang forever.
+After=network.target
+After=bunny-setup.service
 Before=sddm.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/bunny-firstboot
 RemainAfterExit=yes
-TimeoutStartSec=20min
+TimeoutStartSec=5min
+JobTimeoutSec=5min
 Nice=10
 IOSchedulingClass=idle
 StandardOutput=journal

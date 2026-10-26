@@ -56,10 +56,24 @@ case "${MODE}" in
       # shellcheck disable=SC2086
       read -r -a GS_ARGS <<< "${BUNNY_GAMESCOPE_ARGS:--W 1920 -H 1080 -r 60}"
       log "starting gamescope ${GS_ARGS[*]}"
-      exec gamescope "${GS_ARGS[@]}" -- "${PANEL}" --kiosk
+      # Not exec: if gamescope or the panel dies immediately (missing asset,
+      # no DRM master) SDDM would drop the user back to the greeter with no
+      # way forward. Fall back to Plasma instead of a dead end.
+      if gamescope "${GS_ARGS[@]}" -- "${PANEL}" --kiosk; then
+        exit 0
+      fi
+      log "gamescope exited non-zero; falling back to the desktop session"
+      if command -v startplasma-wayland >/dev/null 2>&1; then
+        exec startplasma-wayland
+      fi
+      die "gaming session failed and Plasma is unavailable"
     elif command -v cage >/dev/null 2>&1; then
       log "gamescope unavailable; falling back to cage kiosk"
-      exec cage -- "${PANEL}" --kiosk
+      if cage -- "${PANEL}" --kiosk; then
+        exit 0
+      fi
+      log "cage exited non-zero; falling back to the desktop session"
+      exec startplasma-wayland
     else
       log "no gamescope and no cage; starting the panel bare (dev mode)"
       exec "${PANEL}" --kiosk

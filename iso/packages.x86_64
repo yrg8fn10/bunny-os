@@ -30,6 +30,13 @@ snapper
 ostree
 zram-generator
 efibootmgr
+# The installer and the recovery menu both need these: sgdisk writes the
+# partition table, arch-install-scripts provides genfstab/arch-chroot, rsync
+# copies the live root and the old /home, parted provides partprobe.
+gptfdisk
+arch-install-scripts
+rsync
+parted
 git
 nano
 less

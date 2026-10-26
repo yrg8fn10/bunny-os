@@ -1,0 +1,30 @@
+[Unit]
+Description=Bunny OS Recovery & Maintenance
+Documentation=file:///usr/share/doc/bunny-os/STEAMDECK.md
+# Only active when the "Recovery & Maintenance" boot entry was chosen. The
+# entry adds bunny.recovery=1 and systemd.unit=multi-user.target, so on a
+# normal boot this unit is not pulled in at all.
+ConditionKernelCommandLine=bunny.recovery=1
+After=local-fs.target systemd-udev-settle.service
+Before=multi-user.target
+Conflicts=display-manager.service getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bunny-recovery
+RemainAfterExit=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=no
+Nice=-5
+# The menu is interactive: it holds multi-user.target open until the user
+# quits. That is intentional. The login manager is never started on this
+# entry, and nothing else on the machine needs multi-user.target to finish.
+TimeoutStartSec=infinity
+
+[Install]
+WantedBy=multi-user.target

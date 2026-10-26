@@ -1,0 +1,27 @@
+[Unit]
+Description=Bunny OS Account Provisioning
+Documentation=file:///usr/share/doc/bunny-os/STEAMDECK.md
+# Runs until at least one desktop account exists, then never again.
+ConditionPathExists=!/var/lib/bunny/.account-ready
+After=local-fs.target
+Before=display-manager.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bunny-account-setup
+RemainAfterExit=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=no
+# A handheld with no keyboard must not hang here forever; the script itself
+# exits cleanly when stdin is not a terminal.
+TimeoutStartSec=10min
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

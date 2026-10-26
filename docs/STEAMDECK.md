@@ -186,6 +186,43 @@ Not supported. The installer does not shrink partitions or add a second boot
 entry, and SteamOS updates can rewrite the ESP. Do not attempt a manual
 partitioning workaround on a Deck you care about.
 
+## Recovery & Maintenance
+
+Both the ISO and an installed Deck carry a second boot entry, **Recovery &
+Maintenance**. It boots the same kernel with `bunny.recovery=1` and
+`systemd.unit=multi-user.target`, so the graphical session never starts and a
+console menu owns `tty1`.
+
+| # | Option | What it does |
+|---|--------|--------------|
+| 1 | Clean install | Erases the selected internal disk and installs Bunny OS (same path as `bunny-install`) |
+| 2 | Repair | Checks GPT, ESP, Btrfs root, kernel/initramfs, `loader.conf`, loader entries and every fstab UUID; can rebuild the initramfs and reinstall systemd-boot |
+| 3 | Migration | Installs to a **different** disk and copies the old `/home` (`@home` subvolume) across; the source disk is mounted read-only |
+| 4 | Shell | Root shell on the live image |
+| 5 | System information | `lsblk`, memory, live medium |
+
+Select it in systemd-boot, or press `x` on the syslinux menu for BIOS machines.
+Install and migration need the live USB; repair and the shell also work from an
+installed system. A USB keyboard is required — the Deck's controls are not
+usable in the console menu.
+
+`bunny-install` writes `/boot/loader/entries/bunny-os-recovery.conf` on the
+installed system, so the menu is reachable later without the stick.
+
+### Accounts and offline boot
+
+* `bunny-setup.service` runs before the display manager. If the image ever boots
+  with no human account it prompts on `tty1` for a username and password, then
+  repoints SDDM at it. It writes `/var/lib/bunny/.account-ready` and never runs
+  again; without a terminal it logs and exits instead of hanging.
+* `bunny-firstboot.service` is ordered `After=network.target`, not
+  `network-online.target`, and every network step is time-boxed (`nm-online`
+  for 20 s, `flatpak` for 180 s per app). A Deck booted with no Wi-Fi still
+  reaches the desktop; Flatpaks are retried on the next online boot.
+* `NetworkManager-wait-online.service` and `systemd-networkd-wait-online.service`
+  are masked in both the live image and installed systems, so nothing waits for
+  a default route that may never appear.
+
 ## LCD test checklist
 
 Run these on the live USB before installing. `sudo` is passwordless for the live

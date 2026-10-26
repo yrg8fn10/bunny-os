@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-account-setup — guarantee at least one usable desktop account.
+#
+#  Runs Before=display-manager.service on every boot until it has succeeded
+#  once, then leaves a marker in /var/lib/bunny. Two situations end up here:
+#
+#    * an install or migration that produced a root filesystem with no human
+#      account at all (the case that leaves SDDM showing a greeter nobody can
+#      answer);
+#    * a rolled-back root filesystem whose marker went away but whose account
+#      still exists.
+#
+#  It never blocks the boot: without a TTY it logs and exits 0, so a broken
+#  console cannot wedge the machine.
+# =============================================================================
+set -Eeuo pipefail
+
+STATE_DIR="/var/lib/bunny"
+MARKER="${STATE_DIR}/.account-ready"
+SESSION_CONF="/etc/bunny/session.conf"
+LOG="/var/log/bunny-account-setup.log"
+
+mkdir -p "${STATE_DIR}" "$(dirname "${LOG}")"
+exec > >(tee -a "${LOG}") 2>&1
+
+log()  { printf '[account-setup] %s\n' "$*"; }
+warn() { printf '[account-setup] WARN: %s\n' "$*" >&2; }
+
+# Human accounts: uid in the normal user range, not nobody, not system users.
+human_users() {
+  getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1 }'
+}
+
+mark_done() {
+  date -u +%FT%TZ > "${MARKER}"
+  chmod 0644 "${MARKER}"
+}
+
+FIRST_USER="$(human_users | head -n1 || true)"
+
+if [[ -f "${MARKER}" && -n "${FIRST_USER}" ]]; then
+  exit 0
+fi
+
+# Account exists, marker missing (rolled back root, restored snapshot, or the
+# installer created the user and the marker was lost): adopt it and move on.
+if [[ -n "${FIRST_USER}" ]]; then
+  log "account '${FIRST_USER}' already exists; recording marker"
+  mark_done
+  exit 0
+fi
+
+if [[ ! -t 0 ]]; then
+  warn "no account and no TTY - leaving the system alone"
+  warn "run 'sudo bunny-account-setup' from a console to create one"
+  exit 0
+fi
+
+cat <<'BANNER'
+
+  ┌──────────────────────────────────────────────────────────┐
+  │  Bunny OS — account setup                                │
+  │                                                          │
+  │  This system has no user account yet, so there is nobody │
+  │  to log in as. Create one now; it takes a moment.        │
+  └──────────────────────────────────────────────────────────┘
+
+BANNER
+
+while true; do
+  read -r -p "Username [bunny]: " NEW_USER
+  NEW_USER="${NEW_USER:-bunny}"
+  if [[ ! "${NEW_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    warn "use lower-case letters, digits, _ and -, starting with a letter"
+    continue
+  fi
+  if id -u "${NEW_USER}" >/dev/null 2>&1; then
+    warn "'${NEW_USER}' already exists"
+    continue
+  fi
+  break
+done
+
+read -r -p "Full name (optional): " FULL_NAME
+FULL_NAME="${FULL_NAME:-Bunny OS}"
+
+while true; do
+  read -r -s -p "Password for ${NEW_USER}: " PW1; echo
+  read -r -s -p "Repeat password: " PW2; echo
+  [[ "${PW1}" == "${PW2}" ]] || { warn "passwords do not match"; continue; }
+  (( ${#PW1} >= 8 )) || { warn "use at least 8 characters"; continue; }
+  break
+done
+
+log "creating ${NEW_USER}"
+useradd -m -c "${FULL_NAME}" \
+  -G wheel,input,video,audio,render,storage,power,lp \
+  -s /bin/bash "${NEW_USER}"
+printf '%s:%s\n' "${NEW_USER}" "${PW1}" | chpasswd
+unset PW1 PW2
+
+# sudo for wheel; the live-only NOPASSWD rule is not appropriate here.
+if [[ ! -f /etc/sudoers.d/10-wheel ]]; then
+  printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
+  chmod 0440 /etc/sudoers.d/10-wheel
+fi
+
+chown -R "${NEW_USER}:${NEW_USER}" "/home/${NEW_USER}"
+
+# Keep bunny-sessiond, the panel and SDDM pointed at the account that exists.
+if [[ -f "${SESSION_CONF}" ]]; then
+  if grep -q '^BUNNY_USER=' "${SESSION_CONF}"; then
+    sed -i "s/^BUNNY_USER=.*/BUNNY_USER=${NEW_USER}/" "${SESSION_CONF}"
+  else
+    printf 'BUNNY_USER=%s\n' "${NEW_USER}" >> "${SESSION_CONF}"
+  fi
+fi
+if [[ -f /etc/sddm.conf.d/20-bunny-session.conf ]]; then
+  sed -i "s/^User=.*/User=${NEW_USER}/" /etc/sddm.conf.d/20-bunny-session.conf
+fi
+
+systemctl set-default graphical.target >/dev/null 2>&1 || true
+systemctl enable sddm.service >/dev/null 2>&1 || true
+
+mark_done
+log "account '${NEW_USER}' ready"

@@ -1,0 +1,301 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-recovery — console recovery and maintenance menu.
+#
+#  Reached either from the "Recovery & Maintenance" systemd-boot entry
+#  (bunny.recovery=1 on the kernel command line) or by running it directly.
+#  It is deliberately a plain bash TUI: no dialog/whiptail dependency, no
+#  network, and every destructive action re-prompts.
+#
+#  A USB keyboard is required - the Deck's controls are not usable here.
+# =============================================================================
+set -Eeuo pipefail
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[1;31m'; GRN=$'\033[1;32m'
+YEL=$'\033[1;33m'; CYA=$'\033[1;36m'; RST=$'\033[0m'
+
+line() { printf '%s\n' "${DIM}────────────────────────────────────────────────────────────${RST}"; }
+hdr()  { printf '\n%s%s%s\n' "${CYA}${BOLD}" "$*" "${RST}"; line; }
+ok()   { printf '  %s✓%s %s\n' "${GRN}" "${RST}" "$*"; }
+bad()  { printf '  %s✗%s %s\n' "${RED}" "${RST}" "$*"; }
+info() { printf '  %s·%s %s\n' "${DIM}" "${RST}" "$*"; }
+ask()  { local p="$1" d="${2:-}" a; read -r -p "  ${p}${d:+ [$d]}: " a; printf '%s' "${a:-$d}"; }
+pause(){ read -r -p "  ${DIM}press Enter to continue${RST} " _ || true; }
+
+need_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    exec sudo -- "$0" "$@"
+  fi
+}
+
+live_check() {
+  # Install and migration need the live medium (they copy the running root and
+  # refuse to write to the stick they booted from). Repair and the shell work on
+  # an installed system too, so a missing /run/archiso is not fatal here.
+  if [[ -d /run/archiso ]]; then LIVE=1; else LIVE=0; fi
+}
+
+need_live() {
+  if (( ! LIVE )); then
+    bad "this action needs the Bunny OS live USB"
+    pause
+    return 1
+  fi
+}
+
+# Disks the user may operate on: everything except the stick we booted from.
+candidate_disks() {
+  local live_src live_pk live_disk=""
+  live_src="$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null || true)"
+  if [[ -b "${live_src}" ]]; then
+    live_pk="$(lsblk -no PKNAME "${live_src}" | head -n1 || true)"
+    [[ -n "${live_pk}" ]] && live_disk="/dev/${live_pk}"
+  fi
+  lsblk -dpno NAME,SIZE,TRAN,MODEL | while read -r name size tran model; do
+    [[ "${name}" == "${live_disk}" ]] && continue
+    [[ "${tran}" == "usb" ]] && continue
+    printf '%s\t%s\t%s\n' "${name}" "${size}" "${model:-unknown}"
+  done
+}
+
+pick_disk() {
+  mapfile -t DISKS < <(candidate_disks)
+  if (( ${#DISKS[@]} == 0 )); then
+    bad "no internal disk found"; return 1
+  fi
+  local i
+  for i in "${!DISKS[@]}"; do
+    printf '   %d) %s\n' "$((i+1))" "${DISKS[$i]}"
+  done
+  local n
+  n="$(ask "Disk number" "1")"
+  [[ "${n}" =~ ^[0-9]+$ ]] || { bad "not a number"; return 1; }
+  (( n >= 1 && n <= ${#DISKS[@]} )) || { bad "out of range"; return 1; }
+  printf '%s' "${DISKS[$((n-1))]%%$'\t'*}"
+}
+
+# ---------------------------------------------------------------------------
+# 1. Clean install
+# ---------------------------------------------------------------------------
+action_install() {
+  hdr "Clean install — replace the OS with Bunny OS"
+  need_live || return
+  cat <<'EOF'
+  This erases the selected internal disk completely: partition table,
+  every partition, every file. There is no dual boot and no encryption.
+
+  Your SteamOS install, games and saves on that disk are destroyed. If you
+  have not made a SteamOS recovery USB yet, stop and do that first.
+EOF
+  local disk
+  disk="$(pick_disk)" || { pause; return; }
+  info "target: ${disk}"
+  local confirm
+  confirm="$(ask "Type the disk name to confirm (${disk})")"
+  [[ "${confirm}" == "${disk}" ]] || { bad "cancelled"; pause; return; }
+  exec /usr/local/bin/bunny-install --disk "${disk}"
+}
+
+# ---------------------------------------------------------------------------
+# 2. Repair / integrity check
+# ---------------------------------------------------------------------------
+part_of() {
+  local disk="$1" n="$2"
+  if [[ "${disk}" =~ [0-9]$ ]]; then printf '%s' "${disk}p${n}"; else printf '%s' "${disk}${n}"; fi
+}
+
+action_repair() {
+  hdr "Repair — verify and rebuild boot components"
+  local disk
+  disk="$(pick_disk)" || { pause; return; }
+  local esp root
+  esp="$(part_of "${disk}" 1)"
+  root="$(part_of "${disk}" 2)"
+
+  if [[ ! -b "${root}" ]]; then
+    bad "${root} does not exist - is this a Bunny OS disk?"
+    pause; return
+  fi
+
+  local fails=0
+  hdr "Checking ${disk}"
+
+  # Partition table and filesystems (read-only).
+  if sgdisk -v "${disk}" >/dev/null 2>&1; then
+    ok "GPT is consistent"
+  else
+    bad "GPT reports problems"; fails=$((fails+1))
+  fi
+  if [[ -b "${esp}" ]]; then
+    if fsck.vfat -n "${esp}" >/dev/null 2>&1; then
+      ok "ESP filesystem clean (${esp})"
+    else
+      bad "ESP filesystem has errors"; fails=$((fails+1))
+    fi
+  else
+    bad "no ESP at ${esp}"; fails=$((fails+1))
+  fi
+
+  # Mount read-only and look at the tree.
+  mkdir -p /mnt/bunny-repair
+  if ! mount -o ro,subvol=@ "${root}" /mnt/bunny-repair 2>/dev/null; then
+    bad "cannot mount ${root} (subvol=@)"
+    pause; return
+  fi
+  local m=/mnt/bunny-repair
+
+  if [[ -x "${m}/usr/bin/bash" ]]; then
+    ok "root filesystem populated"
+  else
+    bad "root filesystem looks empty"; fails=$((fails+1))
+  fi
+
+  local kernel initrd
+  kernel="$(find "${m}/boot" -maxdepth 1 -name 'vmlinuz-*' 2>/dev/null | head -n1 || true)"
+  initrd="$(find "${m}/boot" -maxdepth 1 -name 'initramfs-*' 2>/dev/null | head -n1 || true)"
+  if [[ -n "${kernel}" && -n "${initrd}" ]]; then
+    ok "kernel and initramfs present"
+  else
+    bad "kernel or initramfs missing from /boot"; fails=$((fails+1))
+  fi
+
+  if [[ -f "${m}/boot/loader/loader.conf" ]]; then
+    ok "systemd-boot config present"
+  else
+    bad "no /boot/loader/loader.conf"; fails=$((fails+1))
+  fi
+  if [[ -d "${m}/boot/loader/entries" ]]; then
+    ok "loader entries present"
+  else
+    bad "no loader entries directory"; fails=$((fails+1))
+  fi
+
+  # fstab references must resolve, otherwise the next boot hangs on a device.
+  local fstab_bad=0 uuid
+  if [[ -f "${m}/etc/fstab" ]]; then
+    while read -r uuid; do
+      [[ -n "${uuid}" ]] || continue
+      blkid -U "${uuid}" >/dev/null 2>&1 || { bad "fstab UUID ${uuid} not found"; fstab_bad=1; }
+    done < <(sed -nE 's#^UUID=([^[:space:]]+).*#\1#p' "${m}/etc/fstab")
+    if (( fstab_bad )); then
+      fails=$((fails+1))
+    else
+      ok "all fstab UUIDs resolve"
+    fi
+  else
+    bad "no /etc/fstab"; fails=$((fails+1))
+  fi
+
+  info "live root: mounted read-only at ${m}"
+  if (( fails > 0 )); then
+    printf '\n  %s%d problem(s) found.%s\n' "${YEL}" "${fails}" "${RST}"
+  else
+    printf '\n  %sNo problems found.%s\n' "${GRN}" "${RST}"
+  fi
+
+  local do_fix
+  do_fix="$(ask "Rebuild initramfs and reinstall the bootloader now? (y/N)" "N")"
+  if [[ "${do_fix}" =~ ^[Yy]$ ]]; then
+    umount "${m}" 2>/dev/null || true
+    if mount -o "subvol=@" "${root}" "${m}"; then
+      # systemd-boot must be written to the ESP, not to /boot on the root
+      # filesystem, so the ESP has to be mounted over it first.
+      if [[ -b "${esp}" ]]; then
+        mount "${esp}" "${m}/boot" 2>/dev/null \
+          || bad "could not mount the ESP at ${m}/boot"
+      fi
+      info "rebuilding initramfs"
+      if arch-chroot "${m}" mkinitcpio -P; then ok "initramfs rebuilt"; else bad "mkinitcpio failed"; fi
+      info "reinstalling systemd-boot"
+      if arch-chroot "${m}" bootctl --path=/boot install; then
+        ok "systemd-boot reinstalled"
+      else
+        bad "bootctl failed"
+      fi
+      umount -R "${m}" 2>/dev/null || true
+    else
+      bad "could not remount read-write"
+    fi
+  fi
+
+  umount -R "${m}" 2>/dev/null || true
+  rmdir "${m}" 2>/dev/null || true
+  pause
+}
+
+# ---------------------------------------------------------------------------
+# 3. Migration — new disk, keep the old home
+# ---------------------------------------------------------------------------
+action_migrate() {
+  hdr "Migration — move Bunny OS to another disk, keep /home"
+  need_live || return
+  cat <<'EOF'
+  Use this when you are swapping the drive: the system goes to a new disk,
+  the old disk's /home (games, saves, settings) is copied across afterwards.
+
+  The destination disk is erased. The source disk is mounted read-only and
+  never written to, so you can retry or fall back.
+EOF
+  local src dst
+  info "source: the existing Bunny OS disk (read only)"
+  src="$(pick_disk)" || { pause; return; }
+  hdr "Destination"
+  dst="$(pick_disk)" || { pause; return; }
+  if [[ "${src}" == "${dst}" ]]; then
+    bad "source and destination are the same disk"; pause; return
+  fi
+  local confirm
+  confirm="$(ask "Type the DESTINATION disk name to confirm (${dst})")"
+  [[ "${confirm}" == "${dst}" ]] || { bad "cancelled"; pause; return; }
+  exec /usr/local/bin/bunny-install --disk "${dst}" --keep-home-from "${src}"
+}
+
+# ---------------------------------------------------------------------------
+# 4. Shell
+# ---------------------------------------------------------------------------
+action_shell() {
+  hdr "Shell"
+  info "type 'exit' to return to the menu"
+  bash -i || true
+}
+
+menu() {
+  while true; do
+    hdr "Bunny OS — Recovery & Maintenance"
+    if (( LIVE )); then
+      info "running from the live USB: install, migration and repair available"
+    else
+      info "running from an installed system: repair and shell available"
+      info "boot the live USB for install or migration"
+    fi
+    cat <<'EOF'
+   1) Clean install          erase a disk, install Bunny OS
+   2) Repair                 check filesystems, bootloader, fstab
+   3) Migration              install to a new disk, keep your /home
+   4) Shell                  root shell with the live tools
+   5) System information     disks, memory, live medium
+   0) Reboot
+EOF
+    local c
+    c="$(ask "Choice" "0")"
+    case "${c}" in
+      1) action_install ;;
+      2) action_repair ;;
+      3) action_migrate ;;
+      4) action_shell ;;
+      5) hdr "System information"; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL; free -h; pause ;;
+      0) sync; exec systemctl --no-block reboot ;;
+      *) bad "unknown choice" ;;
+    esac
+  done
+}
+
+need_root "$@"
+live_check
+
+if [[ "${1:-}" == "--check" ]]; then
+  action_repair
+  exit 0
+fi
+
+menu

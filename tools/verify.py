@@ -35,12 +35,16 @@ REQUIRED = [
     "system/bin/bunny-panel-bridge",
     "system/bin/bunnyctl",
     "system/bin/bunny-firstboot",
+    "system/bin/bunny-account-setup",
+    "system/bin/bunny-recovery",
     "system/bin/bunny-update",
     "system/bin/bunny-health",
     "system/lib/bunny_sessiond.py",
     "system/lib/bunny_input_agent.py",
     "system/units/bunny-sessiond.service",
     "system/units/bunny-firstboot.service",
+    "system/units/bunny-setup.service",
+    "system/units/bunny-recovery.service",
     "system/units/bunny-update.service",
     "system/units/bunny-update.timer",
     "system/units/bunny-health.service",
@@ -68,6 +72,7 @@ REQUIRED = [
     "installer/bunny-install",
     "iso/targets/deck/target.conf",
     "iso/targets/deck/packages.x86_64",
+    "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
     "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
     "iso/targets/deck/airootfs/etc/systemd/zram-generator.conf",
     "docs/ARCHITECTURE.md",
@@ -83,7 +88,8 @@ TEXT_SUFFIXES = {".sh", ".py", ".js", ".css", ".html", ".json", ".md",
                  ".service", ".timer", ".desktop", ".conf", ".toml"}
 SKIP_DIRS = {"build", "out", "node_modules", "target", ".git", "__pycache__", "vendor"}
 EXTRA_TEXT_NAMES = {"bunnyctl", "bunny-session", "bunny-panel", "bunny-panel-bridge",
-                    "bunny-firstboot", "bunny-update", "bunny-health", "bunny-launcher",
+                    "bunny-firstboot", "bunny-account-setup", "bunny-recovery",
+                    "bunny-update", "bunny-health", "bunny-launcher",
                     "bunny-platform-scan", "bunny-install", "bunny-cli", "Makefile",
                     "VERSION", ".gitignore", ".editorconfig"}
 
@@ -212,6 +218,7 @@ def check_line_endings(rep: Report) -> None:
     allowed_tokens = {
         "iso/profiledef.sh", "iso/airootfs/etc/os-release", "iso/airootfs/etc/motd",
         "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
+        "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
         "iso/overrides/syslinux/syslinux.cfg",
         "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
         "tools/verify.py",
@@ -387,6 +394,7 @@ def check_build(rep: Report) -> None:
     boot_refs: list[str] = []
     for conf in (
         ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
         ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
         ROOT / "iso/overrides/syslinux/syslinux.cfg",
     ):
@@ -406,6 +414,7 @@ def check_build(rep: Report) -> None:
     cmdlines: list[str] = []
     for conf in (
         ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
         ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
         ROOT / "iso/overrides/syslinux/syslinux.cfg",
     ):
@@ -443,6 +452,85 @@ def check_build(rep: Report) -> None:
             "build verifies the initramfs carries the archiso hook")
 
 
+def check_recovery(rep: Report) -> None:
+    print("\naccount, recovery and offline boot")
+    text = lambda rel: (ROOT / rel).read_text("utf-8")
+
+    # --- account provisioner -------------------------------------------------
+    acct = text("system/bin/bunny-account-setup")
+    rep.add("useradd" in acct and "chpasswd" in acct,
+            "account setup creates a user with a password")
+    rep.add('[[ ! -t 0 ]]' in acct,
+            "account setup exits cleanly without a terminal")
+    rep.add("/etc/sddm.conf.d/20-bunny-session.conf" in acct,
+            "account setup repoints SDDM at the new account")
+    setup = text("system/units/bunny-setup.service")
+    rep.add("Before=display-manager.service" in setup,
+            "account setup runs before the login manager")
+    rep.add("ConditionPathExists=!/var/lib/bunny/.account-ready" in setup,
+            "account setup is skipped once an account exists")
+
+    # --- recovery menu -------------------------------------------------------
+    rec = text("system/bin/bunny-recovery")
+    rep.add("bunny-install --disk" in rec, "recovery menu offers a clean install")
+    rep.add("--keep-home-from" in rec, "recovery menu offers a home-preserving migration")
+    rep.add("mkinitcpio -P" in rec and "bootctl" in rec,
+            "recovery menu can rebuild initramfs and bootloader")
+    rep.add("fsck.vfat" in rec and "loader/entries" in rec,
+            "recovery menu checks filesystems and boot entries")
+    recunit = text("system/units/bunny-recovery.service")
+    rep.add("ConditionKernelCommandLine=bunny.recovery=1" in recunit,
+            "recovery menu only starts from its boot entry")
+    rep.add("TTYPath=/dev/tty1" in recunit, "recovery menu owns its own console")
+
+    entry = text("iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf")
+    rep.add("bunny.recovery=1" in entry, "recovery boot entry passes bunny.recovery=1")
+    rep.add("systemd.unit=multi-user.target" in entry,
+            "recovery boot entry skips the graphical target")
+    rep.add("bunny-recovery" in text("iso/overrides/syslinux/syslinux.cfg"),
+            "BIOS menu has a recovery entry")
+
+    # --- installer -----------------------------------------------------------
+    inst = text("installer/bunny-install")
+    rep.add("--keep-home-from" in inst and "rsync -aHAX" in inst,
+            "installer can migrate an existing /home")
+    rep.add("bunny-os-recovery.conf" in inst,
+            "installer writes a recovery boot entry")
+    rep.add(".account-ready" in inst,
+            "installer marks the account as provisioned")
+    rep.add("systemctl enable bunny-recovery.service" in inst,
+            "installer enables the recovery menu for later boots")
+    for tool in ("sgdisk", "genfstab", "arch-chroot", "rsync"):
+        rep.add(tool in inst, f"installer checks for {tool}")
+
+    # Every tool the installer and the recovery menu call must be installed in
+    # the image, or they die at their own preflight on the Deck.
+    pkgs = [l.strip() for l in text("iso/packages.x86_64").splitlines()
+            if l.strip() and not l.strip().startswith("#")]
+    for pkg, why in (("gptfdisk", "sgdisk"), ("arch-install-scripts", "genfstab/arch-chroot"),
+                     ("rsync", "rsync"), ("parted", "partprobe"),
+                     ("dosfstools", "mkfs.fat/fsck.vfat"), ("btrfs-progs", "mkfs.btrfs")):
+        rep.add(pkg in pkgs, f"image ships {pkg} ({why})")
+
+    # --- offline-tolerant boot ----------------------------------------------
+    fbunit = text("system/units/bunny-firstboot.service")
+    fbunit_keys = [l for l in fbunit.splitlines() if l.strip() and not l.lstrip().startswith(("#", ";"))]
+    rep.add(not any("network-online.target" in l for l in fbunit_keys),
+            "first boot does not wait for network-online.target")
+    rep.add(any("After=network.target" in l for l in fbunit_keys),
+            "first boot only orders after network.target")
+    rep.add(any("TimeoutStartSec=" in l for l in fbunit_keys), "first boot is time-boxed")
+    fb = text("system/bin/bunny-firstboot")
+    rep.add("online()" in fb, "first boot probes connectivity itself")
+    rep.add("timeout 180 flatpak" in fb, "flatpak installs are time-boxed")
+    rep.add("network-online.target" not in fb, "first boot script never blocks on the network")
+
+    for rel in ("iso/airootfs/root/customize_airootfs.sh", "installer/bunny-install"):
+        t = text(rel)
+        rep.add("wait-online" in t, f"{rel.split('/')[-1]} masks wait-online units")
+        rep.add(".account-ready" in t, f"{rel.split('/')[-1]} writes the account marker")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -455,7 +543,7 @@ def main(argv: list[str] | None = None) -> int:
     rep = Report(strict=args.strict)
     for check in (check_required, check_json, check_units, check_desktop,
                   check_line_endings, check_packages, check_targets,
-                  check_ai_safety, check_ui, check_build):
+                  check_ai_safety, check_ui, check_recovery, check_build):
         check(rep)
 
     print()
