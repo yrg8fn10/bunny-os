@@ -398,6 +398,30 @@ def check_build(rep: Report) -> None:
     rep.add(not stray, "boot entries reference only files archiso ships")
     rep.add("Verifying boot entry paths" in script, "build verifies boot entry paths")
 
+    # With no root= on the command line, systemd enables gpt-auto discovery and
+    # creates a unit for /dev/gpt-auto-root. The archiso hook has already
+    # mounted the live root by label, so that unit can never succeed; on a Steam
+    # Deck, whose internal disk carries SteamOS root partitions, it times out
+    # and the live system drops into emergency mode. Every entry has to opt out.
+    cmdlines: list[str] = []
+    for conf in (
+        ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/overrides/syslinux/syslinux.cfg",
+    ):
+        for line in conf.read_text("utf-8").splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].lower() in ("options", "append"):
+                cmdlines.append(line)
+    no_optout = [l for l in cmdlines if "systemd.gpt_auto=0" not in l]
+    rep.add(bool(cmdlines) and not no_optout,
+            "boot entries disable gpt-auto root discovery",
+            f"{len(no_optout)} entry(ies) missing systemd.gpt_auto=0")
+    with_root = [l for l in cmdlines if any(t.startswith("root=") for t in l.split())]
+    rep.add(not with_root,
+            "boot entries leave root= to the archiso hook",
+            "root= makes systemd target the FAT32 volume instead of the squashfs")
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
