@@ -65,6 +65,12 @@ jobs:
         working-directory: bunbun
         run: python3 -m unittest discover -s tests -t . -v
 
+      - name: Recovery picker smoke test
+        run: bash tools/recovery-smoke.sh
+
+      - name: Installer post-install smoke test
+        run: bash tools/installer-smoke.sh
+
       - name: JSON parse
         run: |
           set -euo pipefail

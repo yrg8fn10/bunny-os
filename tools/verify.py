@@ -518,16 +518,68 @@ def check_recovery(rep: Report) -> None:
 
     # --- recovery menu -------------------------------------------------------
     rec = text("system/bin/bunny-recovery")
-    rep.add("bunny-install --disk" in rec, "recovery menu offers a clean install")
-    rep.add("--keep-home-from" in rec, "recovery menu offers a home-preserving migration")
-    rep.add("mkinitcpio -P" in rec and "bootctl" in rec,
+    rec_code = "\n".join(l for l in rec.splitlines()
+                         if not l.lstrip().startswith("#"))
+    rep.add("--disk" in rec_code, "recovery menu offers a clean install")
+    rep.add("--keep-home-from" in rec_code, "recovery menu offers a home-preserving migration")
+    rep.add("mkinitcpio -P" in rec_code and "bootctl" in rec_code,
             "recovery menu can rebuild initramfs and bootloader")
-    rep.add("fsck.vfat" in rec and "loader/entries" in rec,
+    rep.add("fsck.vfat" in rec_code and "loader/entries" in rec_code,
             "recovery menu checks filesystems and boot entries")
     recunit = text("system/units/bunny-recovery.service")
     rep.add("ConditionKernelCommandLine=bunny.recovery=1" in recunit,
             "recovery menu only starts from its boot entry")
     rep.add("TTYPath=/dev/tty1" in recunit, "recovery menu owns its own console")
+
+    # The menu used to call `disk="$(pick_disk)"`, which captured the numbered
+    # disk list along with the device name. The confirmation could then never
+    # match, so every action cancelled itself silently and the menu redrew -
+    # the "replace Bunny OS does nothing" loop. The picker must communicate
+    # through a global and must never print to stdout.
+    rep.add('"$(pick_disk)"' not in rec_code,
+            "recovery picker does not capture its own menu output")
+    rep.add("PICKED_DISK=" in rec_code, "recovery picker reports the disk through a global")
+    rep.add('PICKED_DISK="${disks[' in rec_code,
+            "recovery picker stores only the device name")
+
+    # A menu that exits drops tty1 to a locked root getty, so failures must be
+    # survivable: logged with a line number, action kept in a subshell, and a
+    # closed stdin redraws instead of ending the loop.
+    rep.add("trap 'on_error" in rec_code and "${LINENO}" in rec_code,
+            "recovery failures report the failing line")
+    rep.add('LOG_FILE="${LOG_DIR}/recovery.log"' in rec_code,
+            "recovery menu logs to /run/bunny/recovery.log")
+    rep.add("run_action()" in rec_code, "recovery actions run in a subshell")
+    rep.add("return 3" in rec_code and "no input (Ctrl-D)" in rec_code,
+            "recovery menu survives a closed stdin")
+    rep.add(not any(l.strip().startswith("exec /usr/local/bin/bunny-install")
+                    for l in rec_code.splitlines()),
+            "recovery menu never execs the installer")
+    rep.add("run_installer" in rec_code and "tee -a" in rec_code,
+            "installer output is mirrored to the recovery log")
+    rep.add("--self-test" in rec_code and "self_test()" in rec_code,
+            "recovery menu can self-test the environment")
+    # tty1 has no getty behind the menu (the unit conflicts it out), so a "q to
+    # quit" branch would leave the console blank with no way to log in.
+    rep.add("q|Q)" not in rec_code,
+            "recovery menu has no key that strands the console")
+
+    # The unit has to hold the console. `StandardInput=tty` loses the race
+    # against a starting getty and the unit fails - which looks exactly like a
+    # locked recovery environment, and takes the shell with it.
+    rep.add("StandardInput=tty-force" in recunit, "recovery unit forces the console")
+    rep.add("Restart=on-failure" in recunit and "StartLimitIntervalSec=0" in recunit,
+            "recovery unit restarts instead of leaving a bare console")
+    rep.add("Type=simple" in recunit,
+            "recovery unit is long-running, not oneshot")
+    for var in ("PATH=", "HOME=", "TERM="):
+        rep.add(f"Environment={var}" in recunit,
+                f"recovery unit pins {var.rstrip('=')} for the menu and its shell")
+    rep.add("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" in rec,
+            "recovery menu sets PATH before calling any tool")
+    rep.add('HOME="${HOME:-/root}"' in rec, "recovery menu gives root a HOME")
+    rep.add("-t 0" in rec and "ensure_tty" in rec,
+            "recovery shell checks for an interactive terminal first")
 
     entry = text("iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf")
     rep.add("bunny.recovery=1" in entry, "recovery boot entry passes bunny.recovery=1")
@@ -549,13 +601,26 @@ def check_recovery(rep: Report) -> None:
     for tool in ("sgdisk", "genfstab", "arch-chroot", "rsync"):
         rep.add(tool in inst, f"installer checks for {tool}")
 
+    # The live image carries archiso's mkinitcpio drop-in (the hooks that mount
+    # the USB medium). Copied into an installed system it builds an initramfs
+    # that cannot find its root, so the install succeeds and never boots.
+    rep.add("rm -f /etc/mkinitcpio.conf.d/archiso.conf" in inst,
+            "installer drops archiso's initramfs hooks before mkinitcpio -P")
+    rep.add("getent group" in inst,
+            "installer only passes groups that exist on the target")
+    rep.add("cat > /etc/hosts <<HOSTS" in inst and "127.0.1.1" in inst,
+            "installer writes /etc/hosts with the hostname expanded")
+
     # Every tool the installer and the recovery menu call must be installed in
     # the image, or they die at their own preflight on the Deck.
     pkgs = [l.strip() for l in text("iso/packages.x86_64").splitlines()
             if l.strip() and not l.strip().startswith("#")]
     for pkg, why in (("gptfdisk", "sgdisk"), ("arch-install-scripts", "genfstab/arch-chroot"),
                      ("rsync", "rsync"), ("parted", "partprobe"),
-                     ("dosfstools", "mkfs.fat/fsck.vfat"), ("btrfs-progs", "mkfs.btrfs")):
+                     ("dosfstools", "mkfs.fat/fsck.vfat"), ("btrfs-progs", "mkfs.btrfs"),
+                     ("sudo", "the recovery menu re-execs itself as root"),
+                     ("bash", "the recovery shell"), ("nano", "editing files from that shell"),
+                     ("htop", "inspecting the live system")):
         rep.add(pkg in pkgs, f"image ships {pkg} ({why})")
 
     # --- offline-tolerant boot ----------------------------------------------
@@ -608,6 +673,63 @@ def check_recovery(rep: Report) -> None:
     rep.add("espeak-ng" in pkgs2, "image ships espeak-ng")
 
 
+def check_release(rep: Report) -> None:
+    print("\nrelease pipeline")
+    text = lambda rel: (ROOT / rel).read_text("utf-8")
+
+    ship = ROOT / "scripts/ship-release.sh"
+    rep.add(ship.is_file(), "scripts/ship-release.sh exists")
+    smoke = ROOT / "tools/recovery-smoke.sh"
+    rep.add(smoke.is_file(), "tools/recovery-smoke.sh exists")
+    rep.add(smoke.is_file() and "pick_disk" in smoke.read_text("utf-8"),
+            "recovery smoke test drives the real disk picker")
+    inst_smoke = ROOT / "tools/installer-smoke.sh"
+    rep.add(inst_smoke.is_file(), "tools/installer-smoke.sh exists")
+    rep.add(inst_smoke.is_file() and "mkinitcpio.conf.d/archiso.conf"
+            in inst_smoke.read_text("utf-8"),
+            "installer smoke test checks the generated initramfs cleanup")
+    ship_text = text("scripts/ship-release.sh") if ship.is_file() else ""
+    rep.add("git status --porcelain" in ship_text,
+            "ship-release refuses a dirty tree")
+    rep.add("tools/verify.py --strict" in ship_text,
+            "ship-release runs the same verification as CI")
+    rep.add("git tag -a" in ship_text and "git push --quiet origin" in ship_text,
+            "ship-release tags and pushes")
+    rep.add("build-iso.yml" in ship_text and "gh run watch" in ship_text,
+            "ship-release waits for the build workflow")
+    rep.add("--dry-run" in ship_text, "ship-release has a dry run")
+    rep.add('PYTHON="${PYTHON:-}"' in ship_text,
+            "ship-release can be pointed at a specific python")
+    # The order matters: a tag pointing at an unverified tree is a published
+    # broken image, so verification has to happen before the push.
+    if "tools/verify.py --strict" in ship_text and "git tag -a" in ship_text:
+        rep.add(ship_text.index("tools/verify.py --strict")
+                < ship_text.index("git tag -a"),
+                "ship-release verifies before it tags")
+
+    workflow = text(".github/workflows/build-iso.yml")
+    rep.add("tools/recovery-smoke.sh" in workflow,
+            "CI runs the recovery picker smoke test")
+    rep.add("tools/installer-smoke.sh" in workflow,
+            "CI parses the installer's generated post-install script")
+    rep.add("if: startsWith(github.ref, 'refs/tags/v')" in workflow,
+            "release job runs only for version tags")
+    rep.add("contents: write" in workflow, "release job may write releases")
+    rep.add("GH_REPO:" in workflow,
+            "release job sets GH_REPO for gh without a checkout")
+    rep.add("--prerelease" in workflow, "dash tags publish as pre-releases")
+    rep.add("split -b" in workflow,
+            "release job splits an ISO above the 2 GiB asset limit")
+    rep.add("READ-ME-FIRST.txt" in workflow, "release job ships join instructions")
+    rep.add("'deck'" in workflow,
+            "a tagged build defaults to the Deck profile")
+
+    build_doc = text("docs/BUILD.md")
+    rep.add("ship-release.sh" in build_doc, "BUILD.md documents the release script")
+    rep.add("READ-ME-FIRST" in build_doc or ".part" in build_doc,
+            "BUILD.md documents the split release assets")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -620,7 +742,8 @@ def main(argv: list[str] | None = None) -> int:
     rep = Report(strict=args.strict)
     for check in (check_required, check_json, check_units, check_desktop,
                   check_line_endings, check_packages, check_targets,
-                  check_ai_safety, check_ui, check_recovery, check_build):
+                  check_ai_safety, check_ui, check_recovery, check_build,
+                  check_release):
         check(rep)
 
     print()

@@ -8,12 +8,18 @@ ConditionKernelCommandLine=bunny.recovery=1
 After=local-fs.target systemd-udev-settle.service
 Before=multi-user.target
 Conflicts=display-manager.service getty@tty1.service
+# The menu is the only thing on tty1, so never give up restarting it: if it
+# dies, the console falls back to a getty and root is locked on both the live
+# image and an installed system.
+StartLimitIntervalSec=0
 
 [Service]
-Type=oneshot
+Type=simple
 ExecStart=/usr/local/bin/bunny-recovery
-RemainAfterExit=yes
-StandardInput=tty
+# tty-force takes the console even if a getty is still holding it. Plain "tty"
+# makes systemd fail the unit in that race, which looks exactly like a locked
+# recovery environment.
+StandardInput=tty-force
 StandardOutput=tty
 StandardError=tty
 TTYPath=/dev/tty1
@@ -21,10 +27,16 @@ TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=no
 Nice=-5
-# The menu is interactive: it holds multi-user.target open until the user
-# quits. That is intentional. The login manager is never started on this
-# entry, and nothing else on the machine needs multi-user.target to finish.
-TimeoutStartSec=infinity
+# systemd starts services with no HOME and a minimal PATH; the menu and the
+# root shell it spawns both need the full system path and a usable TERM.
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=HOME=/root
+Environment=TERM=linux
+Environment=LANG=C.UTF-8
+Restart=on-failure
+RestartSec=2
+# The menu holds multi-user.target open until the user reboots or quits. That
+# is intentional: the login manager is never started on this entry.
 
 [Install]
 WantedBy=multi-user.target

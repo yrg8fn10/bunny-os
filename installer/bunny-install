@@ -274,14 +274,25 @@ echo '${LOCALE} UTF-8' > /etc/locale.gen
 locale-gen
 echo 'LANG=${LOCALE}' > /etc/locale.conf
 echo '${HOSTNAME}' > /etc/hostname
-cat > /etc/hosts <<'HOSTS'
+cat > /etc/hosts <<HOSTS
 127.0.0.1   localhost
 ::1         localhost
 127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
 HOSTS
 
+# Groups differ between images and a missing one makes useradd fail the whole
+# install, so only pass the groups that actually exist. One -G with a comma
+# list: repeated -G flags would keep only the last group.
+GROUP_LIST=""
+for g in wheel input video audio render storage power lp; do
+  if getent group "\$g" >/dev/null 2>&1; then
+    GROUP_LIST="\${GROUP_LIST:+\${GROUP_LIST},}\$g"
+  fi
+done
+UG_ARGS=()
+if [[ -n "\${GROUP_LIST}" ]]; then UG_ARGS=(-G "\${GROUP_LIST}"); fi
 id -u '${USERNAME}' >/dev/null 2>&1 || \
-  useradd -m -c "Bunny OS" -G wheel,input,video,audio,render,storage,power,lp -s /bin/bash '${USERNAME}'
+  useradd -m -c "Bunny OS" "\${UG_ARGS[@]}" -s /bin/bash '${USERNAME}'
 PASSWORD="\$(cat /root/.bunny-password)"
 printf '%s:%s\n' '${USERNAME}' "\${PASSWORD}" | chpasswd
 shred -u /root/.bunny-password 2>/dev/null || rm -f /root/.bunny-password
@@ -346,6 +357,13 @@ systemd-machine-id-setup
 
 rm -f /etc/bunny/allow-input-agent
 
+# The live image carries archiso's initramfs drop-in (the archiso/memdisk
+# hooks that mount the USB medium). Copied into an installed system it builds
+# an initramfs that looks for the installer stick and drops to an emergency
+# shell, so the install "succeeds" and the machine never boots. The stock
+# Arch hooks must win here.
+rm -f /etc/mkinitcpio.conf.d/archiso.conf
+rmdir /etc/mkinitcpio.conf.d 2>/dev/null || true
 mkinitcpio -P
 
 KERNEL_PATH="\$(ls -1 /boot/vmlinuz-* 2>/dev/null | head -n1 || true)"

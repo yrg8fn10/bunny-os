@@ -116,6 +116,11 @@ cat build/build-plan.txt
 # Bun Bun unit tests (offline, stdlib only):
 cd bunbun && python3 -m unittest discover -s tests -t . -v
 
+# The recovery menu's disk picker and the installer's generated post-install
+# script (both run without root, disks or Arch):
+bash tools/recovery-smoke.sh
+bash tools/installer-smoke.sh
+
 # Inspect the result:
 ls -lh out/
 ( cd out && for f in *.iso.sha256; do sha256sum -c "$f"; done )
@@ -148,7 +153,8 @@ Caveats, stated plainly:
 
 `.github/workflows/build-iso.yml` runs three jobs:
 
-1. **verify** — `tools/verify.py`, shell syntax, Bun Bun tests.
+1. **verify** — `tools/verify.py`, shell syntax, Bun Bun tests and the two
+   smoke tests (`recovery-smoke.sh`, `installer-smoke.sh`).
 2. **build** — privileged Arch container on `ubuntu-latest`, uploads the ISO,
    checksum and manifest as workflow artefacts.
 3. **release** — on a `v*` tag, attaches the same files to a GitHub release.
@@ -281,3 +287,20 @@ sha256sum -c BunnyOS-deck-installer.iso.sha256
 
 The same ISO is also a workflow artefact for 14 days, which is the easier route
 for testers who have repository access (no joining, no size limit).
+
+### Shipping from a working tree
+
+`scripts/ship-release.sh` is the "patch is merged, publish the new image" path.
+It refuses a dirty tree or a branch other than `main`, runs `verify.py --strict`
+plus `bash -n` and the Python compile *before* it tags, pushes `main`, creates the
+next `vX.Y.Z-beta.N` tag, watches the workflow and prints the release URL:
+
+```
+scripts/ship-release.sh              # next beta
+scripts/ship-release.sh --dry-run    # check everything, push nothing
+scripts/ship-release.sh v0.2.0-beta.1
+PYTHON=/path/to/python scripts/ship-release.sh   # if python is not on PATH
+```
+
+Verification runs first on purpose: a tag is published to testers, so tagging an
+unverified tree is the one mistake the script must not allow.
