@@ -58,12 +58,15 @@ def main() -> int:
     mod = load_module()
     calls: list[list[str]] = []
 
-    # Nothing in this test may touch the host. System tools are stubbed and
-    # accounts are read from a fake /etc/passwd file that does not exist here.
+    # Nothing in this test may touch the host. System tools are stubbed, the
+    # timezone database is a miniature copy, and the account list is a stub:
+    # GitHub's runner has a real uid-1000 user that would otherwise look like a
+    # desktop account and make `needs_account` false.
     mod.run = lambda cmd, **kw: (calls.append(list(cmd)), FakeResult())[1]
     real_which = shutil.which
     shutil.which = lambda name: None
     real_human = mod.human_users
+    mod.human_users = lambda: []
 
     tmp = Path(tempfile.mkdtemp(prefix="bunny-setupd-"))
     try:

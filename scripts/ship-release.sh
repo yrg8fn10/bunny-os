@@ -83,7 +83,10 @@ fail=0
 while IFS= read -r -d '' f; do
   bash -n "${f}" || fail=1
 done < <(find . -path ./.git -prune -o -name '*.sh' -print0)
-bash -n system/bin/* installer/bunny-install launchers/bin/* scripts/*.sh || fail=1
+for f in system/bin/* installer/bunny-install launchers/bin/* scripts/*.sh; do
+  [[ -f "${f}" ]] || continue
+  bash -n "${f}" || fail=1
+done
 (( fail == 0 )) || die "shell syntax errors"
 ok "bash -n"
 
