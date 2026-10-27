@@ -32,6 +32,8 @@ REQUIRED = [
     "iso/airootfs/etc/sddm.conf.d/20-bunny-session.conf",
     "system/bin/bunny-session",
     "system/bin/bunny-desktop-greeting",
+    "system/bin/bunny-desktop-theme",
+    "iso/airootfs/usr/share/backgrounds/bunny-os/bunny-meadow.png",
     "system/bin/bunny-panel",
     "system/bin/bunny-panel-bridge",
     "system/bin/bunnyctl",
@@ -65,6 +67,9 @@ REQUIRED = [
     "control-panel/ui/index.html",
     "control-panel/ui/js/app.js",
     "control-panel/ui/css/panel.css",
+    "control-panel/ui/css/pastel.css",
+    "control-panel/ui/js/companion.js",
+    "control-panel/ui/js/quickmenu.js",
     "control-panel/ui/assets/bunny.svg",
     "control-panel/src-tauri/Cargo.toml",
     "control-panel/src-tauri/tauri.conf.json",
@@ -90,7 +95,7 @@ TEXT_SUFFIXES = {".sh", ".py", ".js", ".css", ".html", ".json", ".md",
 SKIP_DIRS = {"build", "out", "node_modules", "target", ".git", "__pycache__", "vendor"}
 EXTRA_TEXT_NAMES = {"bunnyctl", "bunny-session", "bunny-panel", "bunny-panel-bridge",
                     "bunny-firstboot", "bunny-account-setup", "bunny-recovery",
-                    "bunny-desktop-greeting",
+                    "bunny-desktop-greeting", "bunny-desktop-theme",
                     "bunny-update", "bunny-health", "bunny-launcher",
                     "bunny-platform-scan", "bunny-install", "bunny-cli", "Makefile",
                     "VERSION", ".gitignore", ".editorconfig"}
@@ -360,6 +365,45 @@ def check_ui(rep: Report) -> None:
     sessiond = (ROOT / "system/lib/bunny_sessiond.py").read_text("utf-8")
     rep.add("refresh_sddm" in sessiond and "[Autologin]" in sessiond,
             "autologin drop-in is daemon-owned")
+
+    # --- skin, quick access, companion ---------------------------------------
+    rep.add("css/pastel.css" in html, "pastel skin stylesheet linked")
+    rep.add("quick-menu" in html, "carrot button wired in the shell")
+    quick_js = (ROOT / "control-panel/ui/js/quickmenu.js").read_text("utf-8")
+    for label in ("Power", "Library", "Quick settings", "Home"):
+        rep.add(label in quick_js, f"quick menu offers {label}")
+    rep.add("nav.setScope" in quick_js, "quick menu integrates with spatial focus")
+    rep.add("op ? 'power' : 'navigate'" in quick_js,
+            "quick menu power tiles dispatch the power action")
+    rep.add("createQuickMenu" in app_js, "quick menu instantiated by the shell")
+    rep.add("'quick-menu'" in app_js, "quick menu reachable from the action map")
+
+    companion_js = (ROOT / "control-panel/ui/js/companion.js").read_text("utf-8")
+    rep.add("createCompanion" in app_js, "companion instantiated by the shell")
+    rep.add("setScreen" in app_js, "companion receives screen state")
+    rep.add("camera" in companion_js.lower() and "no camera" in companion_js.lower()
+            or "No webcam" in companion_js,
+            "companion documents screen-state (not camera) tracking")
+    rep.add("watcher" in app_js, "companion reads the active app from the watcher")
+    pastel = (ROOT / "control-panel/ui/css/pastel.css").read_text("utf-8")
+    rep.add("--pink" in pastel and "carrot-button" in pastel,
+            "pastel palette and carrot button styled")
+    rep.add(".companion" in pastel, "companion positioned by the skin")
+
+    gamepad = (ROOT / "control-panel/ui/js/gamepad.js").read_text("utf-8")
+    rep.add("quick-menu" in gamepad, "LB+RB opens the quick menu")
+
+    # --- desktop workspace ---------------------------------------------------
+    wall = ROOT / "iso/airootfs/usr/share/backgrounds/bunny-os/bunny-meadow.png"
+    rep.add(wall.is_file() and wall.stat().st_size > 10_000,
+            "pastel desktop wallpaper shipped")
+    theme = (ROOT / "system/bin/bunny-desktop-theme").read_text("utf-8")
+    rep.add("plasma-apply-wallpaperimage" in theme, "wallpaper applied through Plasma")
+    rep.add(wall.name in theme, "theme script points at the shipped wallpaper")
+    sess_text = (ROOT / "system/bin/bunny-session").read_text("utf-8")
+    rep.add("apply_desktop_theme" in sess_text, "desktop session applies the theme")
+    rep.add((ROOT / "tools/make-wallpaper.py").is_file(),
+            "wallpaper is reproducible from source")
 
 
 def check_build(rep: Report) -> None:

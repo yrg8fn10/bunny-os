@@ -7,9 +7,8 @@
 #
 #    * Silent no-op when TTS or the sound server is missing - a greeting is
 #      never worth a failed login.
-#    * One greeting per boot: a stamp file in XDG_RUNTIME_DIR stops the
-#      "switch to desktop, back to gaming, back to desktop" churn from
-#      repeating the line.
+#    * Rate limited, not once-per-boot: every gaming -> desktop switch greets,
+#      but a session that bounces twice in a few seconds only speaks once.
 #    * espeak-ng is the guarantee (it is in the image); a piper voice model is
 #      used instead when one was installed under /usr/share/bunbun/voices.
 #    * Lines come from the persona file so tone stays consistent with Bun Bun's
@@ -22,6 +21,7 @@ VOICE_DIR="/usr/share/bunbun/voices"
 CONF="/etc/bunny/session.conf"
 RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 STAMP="${RUNTIME}/bunny-desktop-greeting.stamp"
+MIN_GAP=45
 
 # shellcheck disable=SC1090
 [[ -r "${CONF}" ]] && source "${CONF}"
@@ -29,8 +29,15 @@ STAMP="${RUNTIME}/bunny-desktop-greeting.stamp"
 log() { printf 'bunny-desktop-greeting: %s\n' "$*" >&2; }
 
 [[ "${BUNNY_DESKTOP_GREETING:-1}" == "1" ]] || exit 0
-[[ -f "${STAMP}" ]] && exit 0
-: > "${STAMP}" 2>/dev/null || true
+
+# Throttle instead of a one-shot flag: the intent is "greet on every switch",
+# and the stamp only exists so a session that restarts immediately stays quiet.
+now="$(date +%s 2>/dev/null || echo 0)"
+last="$(cat "${STAMP}" 2>/dev/null || echo 0)"
+if [[ "${last}" =~ ^[0-9]+$ ]] && (( now - last < MIN_GAP )); then
+  exit 0
+fi
+printf '%s\n' "${now}" > "${STAMP}" 2>/dev/null || true
 
 LINES=(
   "Hi hi! Bun Bun here. Desktop Mode, coming right up!"

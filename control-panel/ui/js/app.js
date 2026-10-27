@@ -5,6 +5,8 @@
 import { PanelApi } from './api.js';
 import { FocusNav } from './nav.js';
 import { startGamepad } from './gamepad.js';
+import { createQuickMenu } from './quickmenu.js';
+import { createCompanion } from './companion.js';
 import { esc, platformLabel } from './util.js';
 import { RECOMMENDED } from './views/tweaks.js';
 import * as home from './views/home.js';
@@ -65,7 +67,21 @@ const nav = new FocusNav({
   },
 });
 
+// Quick access (carrot button / C / LB+RB) and the Bun Bun companion invite
+// themselves into the shell rather than the other way around, so views stay
+// pure markup.
+const quickMenu = createQuickMenu({ nav, viewEl });
+const companion = createCompanion({ onOpen: () => navigate('bunbun') });
+
+// #quickaccess is deferred until the first navigate() lands, otherwise the boot
+// sequence repaints focus onto Home and the menu opens with no focus inside it.
+let pendingQuick = location.hash === '#quickaccess';
+
 function onAction(action) {
+  if (action === 'quick-menu') {
+    if (!modalClose) quickMenu.toggle();
+    return;
+  }
   if (action === 'accept') {
     nav.activate();
     return;
@@ -114,6 +130,15 @@ function paintChrome() {
       ? 'Library unavailable'
       : `${count ?? 0} games · ${state.connection.label}`;
   }
+
+  // Screen-aware companion: session mode + panel view + the title the
+  // perception watcher currently reports. No camera, no microphone.
+  companion.setScreen({
+    mode,
+    view: state.view,
+    title: state.bunbun.status?.watcher?.title || '',
+    online,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +280,7 @@ function onAgentEvent(event) {
   if (event.topic === 'coop.refused') {
     toast(payload.reason || 'Bun Bun refused to join this lobby.', { title: 'Co-op', kind: 'warn' });
   }
+  companion.react(event.topic, payload);
   paintChrome();
 }
 
@@ -280,10 +306,16 @@ function navigate(view, { focus = true } = {}) {
     item.classList.toggle('is-active', item.dataset.view === view);
   });
   renderView();
+  companion.setScreen({ view });
   if (focus) {
     nav.setScope(viewEl());
     nav.refresh();
     viewEl()?.scrollTo?.({ top: 0 });
+  }
+  // After the focus reset above, so the menu actually owns the D-pad.
+  if (pendingQuick) {
+    pendingQuick = false;
+    quickMenu.open();
   }
 }
 
@@ -573,6 +605,7 @@ async function showAudit() {
 // ---------------------------------------------------------------------------
 const ACTIONS = {
   navigate: (el) => navigate(el.dataset.view),
+  'quick-menu': () => { if (!modalClose) quickMenu.toggle(); },
   'toggle-mode': () => switchMode(),
   'switch-mode': (el) => switchMode(el.dataset.mode),
   'launch-platform': (el) => launchPlatform(el.dataset.platform),

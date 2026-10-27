@@ -12,6 +12,7 @@ export function startGamepad({ onAction, onGamepad } = {}) {
   let heldSince = 0;
   let previous = new Map();
   let connected = false;
+  let chordArmed = true;
 
   const buttonToAction = (index) => {
     switch (index) {
@@ -46,9 +47,21 @@ export function startGamepad({ onAction, onGamepad } = {}) {
     }
 
     // --- buttons ---------------------------------------------------------
+    // LB+RB is the quick-access chord. While both are held, the individual
+    // shoulder buttons must not also page through sections.
+    const lbDown = Boolean(pad.buttons[4]?.pressed);
+    const rbDown = Boolean(pad.buttons[5]?.pressed);
+    if (lbDown && rbDown && chordArmed) {
+      chordArmed = false;
+      onAction?.('quick-menu');
+    } else if (!lbDown && !rbDown) {
+      chordArmed = true;
+    }
+
     pad.buttons.forEach((button, index) => {
       const action = buttonToAction(index);
       if (!action) return;
+      if ((index === 4 && rbDown) || (index === 5 && lbDown)) return;
       const pressed = button.pressed || button.value > 0.6;
       const was = previous.get(index) || false;
       previous.set(index, pressed);

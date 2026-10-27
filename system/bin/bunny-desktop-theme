@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-desktop-theme — apply the pastel Bunny OS workspace in Desktop Mode.
+#
+#  Called from bunny-session after Plasma starts. Plasma owns the wallpaper via
+#  plasmashell's DBus interface, so this retries for a few seconds instead of
+#  assuming the shell is ready. Everything here is best effort: failing to set
+#  a wallpaper must never affect the session.
+# =============================================================================
+set -uo pipefail
+
+WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-meadow.png"
+ACCENT="255,179,217"
+STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny"
+LOG_FILE="${STATE_DIR}/desktop-theme.log"
+
+mkdir -p "${STATE_DIR}" 2>/dev/null || true
+log() {
+  local msg
+  msg="$(date -u +%FT%TZ) [desktop-theme] $*"
+  printf '%s\n' "${msg}" >&2
+  printf '%s\n' "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+}
+
+[[ -f "${WALLPAPER}" ]] || { log "wallpaper missing at ${WALLPAPER}"; exit 0; }
+
+applied=0
+if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then
+  for _ in $(seq 1 20); do
+    if plasma-apply-wallpaperimage "${WALLPAPER}" >/dev/null 2>&1; then
+      applied=1
+      log "wallpaper applied"
+      break
+    fi
+    sleep 1
+  done
+fi
+(( applied )) || log "plasma-apply-wallpaperimage unavailable or refused the image"
+
+# Accent colour: Plasma 6 reads General/AccentColor from kdeglobals. Only write
+# it when the key is absent or still the default, so a user choice survives.
+if command -v kwriteconfig6 >/dev/null 2>&1; then
+  current="$(kreadconfig6 --file kdeglobals --group General --key AccentColor 2>/dev/null || true)"
+  if [[ -z "${current}" || "${current}" == "0,0,0" ]]; then
+    kwriteconfig6 --file kdeglobals --group General --key AccentColor "${ACCENT}" \
+      && log "accent colour set to pastel pink"
+  fi
+fi
+
+exit 0

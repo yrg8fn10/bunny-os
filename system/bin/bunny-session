@@ -73,15 +73,25 @@ play_greeting() {
   ( sleep 4; "${helper}" ) >/dev/null 2>&1 &
 }
 
+# Plasma owns the wallpaper through plasmashell's DBus interface, so the theme
+# has to run after the shell is up - never before, and never blocking.
+apply_desktop_theme() {
+  local helper=/usr/local/bin/bunny-desktop-theme
+  [[ -x "${helper}" ]] || return 0
+  ( sleep 6; "${helper}" ) >/dev/null 2>&1 &
+}
+
 start_desktop() {
   log "starting the Plasma desktop session"
   if command -v startplasma-wayland >/dev/null 2>&1; then
+    apply_desktop_theme
     play_greeting
     exec startplasma-wayland
   fi
   if command -v startplasma-x11 >/dev/null 2>&1; then
     export XDG_SESSION_TYPE=x11
     log "Wayland unavailable; starting Plasma on X11"
+    apply_desktop_theme
     play_greeting
     exec startplasma-x11
   fi
