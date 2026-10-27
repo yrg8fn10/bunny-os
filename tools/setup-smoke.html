@@ -197,6 +197,20 @@ try {
   await waitFor(() => $('acct-user'), 'account fields');
   check(Boolean($('acct-pass')) && Boolean($('acct-confirm')),
     'account step asks for a password and a confirmation');
+
+  // The Deck's A button must be able to open the keyboard on a text field.
+  // In lizard mode A arrives as Enter, which FocusNav leaves to the field.
+  const nameCell = $('acct-name');
+  nameCell.focus();
+  nameCell.dispatchEvent(new win.KeyboardEvent('keydown',
+    { key: 'Enter', bubbles: true, cancelable: true }));
+  const raised = await waitFor(() => !$('keyboard').hidden, 'keyboard from Enter');
+  check(raised && api.state.keyboard.target === nameCell,
+    'A/Enter on an account field raises the on-screen keyboard');
+  api.closeKeyboard();
+  await wait(60);
+  check($('keyboard').hidden, 'closing the keyboard leaves the wizard usable');
+
   $('acct-user').value = 'robin';
   $('acct-pass').value = 'short';
   $('acct-confirm').value = 'short';

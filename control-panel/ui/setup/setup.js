@@ -1136,6 +1136,19 @@ function wire() {
     }
   });
 
+  // The Deck's controller in lizard mode reports A as Enter, and FocusNav
+  // deliberately leaves Enter to a focused text field. Without this, A on the
+  // account or search field does nothing and the on-screen keyboard can only
+  // be raised with a finger, so the account step would be touch-only.
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || state.keyboard.open) return;
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!input.hasAttribute('data-keyboard') && !input.closest('#wifi-dialog')) return;
+    event.preventDefault();
+    openKeyboard(input);
+  });
+
   // Delegated: renderStep() replaces #step's innerHTML, so listeners bound to
   // the search field itself would be dropped on every re-render and typing
   // would silently stop filtering.

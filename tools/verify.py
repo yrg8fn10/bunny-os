@@ -423,6 +423,9 @@ def check_ui(rep: Report) -> None:
             "wizard Continue advances after the account is created")
     rep.add("addEventListener('input'" in wizard_js and "filterZones" in wizard_js,
             "zone search survives step re-renders")
+    rep.add("input.hasAttribute('data-keyboard')" in wizard_js
+            and "state.keyboard.open" in wizard_js,
+            "wizard A/Enter on a text field raises the on-screen keyboard")
     smoke = (ROOT / "tools/setup-smoke.html").read_text("utf-8")
     for needle, label in (
         ("wizard module", "setup smoke boots the real wizard module"),
