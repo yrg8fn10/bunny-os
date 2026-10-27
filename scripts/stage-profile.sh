@@ -240,7 +240,15 @@ render_tokens "${STAGE}/profiledef.sh" \
 
 # A token that survives staging means a file type render_tokens does not know
 # about (syslinux.cfg was one) would ship a literal version token in the image.
-left="$(grep -rIl -E '@(VERSION|BUILD_ID|BUILD_DATE|CHANNEL)@' "${STAGE}" \
+# Only the trees archiso actually copies are scanned: the staged profile also
+# carries the target overlay sources under targets/, which keep their tokens.
+scan_trees=("${AIR}")
+for bootdir in efiboot syslinux grub; do
+  if [[ -d "${STAGE}/${bootdir}" ]]; then
+    scan_trees+=("${STAGE}/${bootdir}")
+  fi
+done
+left="$(grep -rIl -E '@(VERSION|BUILD_ID|BUILD_DATE|CHANNEL)@' "${scan_trees[@]}" \
   --include='*.conf' --include='*.cfg' --include='*.sh' --include='*.py' \
   --include='*.desktop' --include='*.service' --include='*.json' \
   --include='*.html' --include='*.js' --include='*.css' --include='*.md' \
