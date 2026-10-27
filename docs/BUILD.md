@@ -256,3 +256,28 @@ Bunny OS does not yet promise bit-identical images. Package versions move, and
 `mkarchiso` embeds timestamps. The manifest records the git revision, archiso
 version and host so two builds can be compared. For a reproducible set, pin
 packages with a dated mirror and build from a clean container.
+
+## 11. Beta releases
+
+Pushing a `v*` tag builds and publishes automatically:
+
+```
+git tag -a v0.1.0-beta.1 -m "beta 1"
+git push origin v0.1.0-beta.1
+```
+
+A tag has no workflow input, so it builds the `deck` profile (that is what the
+tagged channel means). Tags containing a `-` are marked as pre-releases.
+
+GitHub caps a release asset at 2 GiB and the Deck image is about 2.7 GB, so the
+release job splits the ISO into 1.9 GB `.part` files, deletes the unsplit copy
+and attaches a `READ-ME-FIRST.txt` with the join command. The `.sha256` still
+describes the joined ISO:
+
+```
+cat BunnyOS-deck-installer.iso.??.part > BunnyOS-deck-installer.iso
+sha256sum -c BunnyOS-deck-installer.iso.sha256
+```
+
+The same ISO is also a workflow artefact for 14 days, which is the easier route
+for testers who have repository access (no joining, no size limit).

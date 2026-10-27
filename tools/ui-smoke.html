@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ui smoke</title>
+<style>
+  body { font: 13px/1.5 monospace; background: #16111c; color: #f5eef8; padding: 24px; }
+  .pass { color: #8ef0c6; } .fail { color: #ff8fa3; } h1 { font-size: 15px; }
+</style>
+</head>
+<body>
+<h1>Bunny OS panel smoke test</h1>
+<pre id="out">running…</pre>
+<script type="module">
+/* Behavioural checks for the two bugs that the static verifier cannot see:
+ * power tiles dispatching nothing, and the quick menu handing focus back to a
+ * panel that is no longer on screen.
+ *
+ * The page is not shipped in the image; it is served from the repo root and
+ * driven by headless Edge:
+ *
+ *   python -m http.server 8900 --directory .
+ *   msedge --headless=new --dump-dom http://127.0.0.1:8900/tools/ui-smoke.html
+ *
+ * Results are written into #out and into document.title, so a plain DOM dump
+ * is enough to read them. No node, no test runner.
+ */
+import { createQuickMenu } from '../control-panel/ui/js/quickmenu.js';
+
+const out = document.getElementById('out');
+const lines = [];
+let passed = 0;
+let failed = 0;
+
+const check = (ok, label, detail = '') => {
+  if (ok) passed += 1; else failed += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
+};
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+// --- harness ---------------------------------------------------------------
+const viewA = document.createElement('div');
+const viewB = document.createElement('div');
+viewA.innerHTML = '<button data-focusable>a</button>';
+viewB.innerHTML = '<button data-focusable>b</button>';
+document.body.append(viewA, viewB);
+
+let activeView = viewA;
+const viewEl = () => activeView;
+
+const nav = {
+  scope: document.body,
+  scopes: [],
+  refreshes: 0,
+  setScope(el) { this.scope = el; this.scopes.push(el); this.refresh(); },
+  refresh() { this.refreshes += 1; },
+  move() {},
+  activate() {},
+};
+
+// Mirrors app.js's delegated click handler closely enough to prove that the
+// markup carries the action the real handler looks up.
+const seen = [];
+document.addEventListener('click', (event) => {
+  const el = event.target.closest('[data-action]');
+  if (el) seen.push({ action: el.dataset.action, op: el.dataset.op || '', view: el.dataset.view || '' });
+});
+
+const menu = createQuickMenu({ nav, viewEl });
+const panel = menu.root.querySelector('.quickmenu__panel');
+
+// --- 1. markup wiring ------------------------------------------------------
+const tiles = [...menu.root.querySelectorAll('[data-focusable]')];
+check(tiles.length === 8, 'quick menu has 8 tiles', String(tiles.length));
+
+const navTiles = tiles.filter((t) => t.dataset.op === undefined && t.dataset.view);
+check(navTiles.length === 4, 'four navigation tiles');
+check(navTiles.every((t) => t.dataset.action === 'navigate'), 'navigation tiles use the navigate action');
+
+const powerTiles = [...menu.root.querySelectorAll('[data-op]')];
+check(powerTiles.length === 4, 'four power tiles', String(powerTiles.length));
+check(powerTiles.every((t) => t.dataset.action === 'power'),
+  'power tiles dispatch the power action',
+  powerTiles.map((t) => t.dataset.action).join(','));
+check(powerTiles.every((t) => t.dataset.action !== 'undefined'), 'no undefined actions');
+check(powerTiles.map((t) => t.dataset.op).join() === 'suspend,logout,reboot,poweroff',
+  'power ops in order', powerTiles.map((t) => t.dataset.op).join());
+
+// --- 2. opening owns the D-pad --------------------------------------------
+menu.open();
+await frame();
+check(!menu.root.hidden && menu.root.classList.contains('is-open'), 'menu opens');
+check(nav.scope === panel, 'open() moves focus scope into the menu');
+
+// --- 3. a tile click reaches the action map and closes the menu -----------
+const sleepTile = powerTiles[0];
+sleepTile.click();
+await tick();
+check(seen.length === 1 && seen[0].action === 'power' && seen[0].op === 'suspend',
+  'Sleep tile dispatches power/suspend', JSON.stringify(seen[0] || null));
+check(menu.root.hidden, 'menu closes after a tile click');
+
+// --- 4. closing restores the *current* view, not the captured one --------
+check(nav.scope === viewA, 'close restores the active view');
+activeView = viewB;
+menu.open();
+menu.close();
+check(nav.scope === viewB, 'close restores a view that changed while open');
+
+// --- 5. navigation tiles carry their view -------------------------------
+seen.length = 0;
+menu.open();
+menu.root.querySelector('[data-view="platforms"]').click();
+await tick();
+check(seen[0]?.action === 'navigate' && seen[0]?.view === 'platforms',
+  'Library tile dispatches navigate/platforms', JSON.stringify(seen[0] || null));
+check(nav.scope === viewB, 'focus lands on the live view after navigating from the menu');
+
+// --- 6. a dialog that claims focus keeps it ------------------------------
+const dialog = document.createElement('div');
+menu.open();
+nav.setScope(dialog);
+menu.close();
+check(nav.scope === dialog, 'close leaves focus with a dialog that claimed it');
+
+// --- 7. the menu is already shut when the action handler runs -----------
+let hiddenDuringAction = null;
+document.addEventListener('click', () => { hiddenDuringAction = menu.root.hidden; });
+menu.open();
+menu.root.querySelector('[data-view="home"]').click();
+check(hiddenDuringAction === true, 'menu closes before the action handler runs',
+  String(hiddenDuringAction));
+
+// --- report ----------------------------------------------------------------
+out.className = failed ? 'fail' : 'pass';
+out.textContent = `${failed ? 'FAIL' : 'PASS'} ${passed}/${passed + failed}\n\n${lines.join('\n')}`;
+document.title = `${failed ? 'FAIL' : 'PASS'} ${passed}/${passed + failed}`;
+</script>
+</body>
+</html>

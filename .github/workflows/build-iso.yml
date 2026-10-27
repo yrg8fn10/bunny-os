@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+# Tagged builds are the beta channel: a tag has no workflow input, so it means
+# "the Deck image" rather than the generic one.
+env:
+  BUNNY_TARGET: ${{ github.event.inputs.target || (startsWith(github.ref, 'refs/tags/v') && 'deck') || 'generic' }}
+
 concurrency:
   group: build-iso-${{ github.ref }}
   cancel-in-progress: true
@@ -70,8 +75,6 @@ jobs:
     name: build installer ISO
     needs: verify
     runs-on: ubuntu-latest
-    env:
-      BUNNY_TARGET: ${{ github.event.inputs.target || 'generic' }}
     container:
       image: archlinux:latest
       options: --privileged
@@ -104,7 +107,7 @@ jobs:
       - name: Upload artefacts
         uses: actions/upload-artifact@v4
         with:
-          name: BunnyOS-${{ github.event.inputs.target || 'generic' }}-${{ github.run_number }}
+          name: BunnyOS-${{ github.event.inputs.target || (startsWith(github.ref, 'refs/tags/v') && 'deck') || 'generic' }}-${{ github.run_number }}
           path: |
             out/*.iso
             out/*.iso.sha256
@@ -133,18 +136,54 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: BunnyOS-${{ github.event.inputs.target || 'generic' }}-${{ github.run_number }}
+          name: BunnyOS-${{ github.event.inputs.target || (startsWith(github.ref, 'refs/tags/v') && 'deck') || 'generic' }}-${{ github.run_number }}
           path: dist
+
+      - name: Prepare assets
+        run: |
+          set -euo pipefail
+          iso="$(find dist -maxdepth 1 -name '*.iso' -print -quit)"
+          test -n "${iso}"
+          size="$(stat -c%s "${iso}")"
+          # GitHub caps a release asset at 2 GiB and a Deck image is ~2.7 GB, so
+          # split it into ordered parts instead of failing the upload. The
+          # .sha256 still describes the joined ISO, not the parts.
+          if [ "${size}" -gt 2000000000 ]; then
+            base="$(basename "${iso}")"
+            ( cd dist \
+              && split -b 1900M -d --numeric-suffixes=1 --suffix-length=2 \
+                   --additional-suffix=.part "${base}" "${base}." \
+              && rm -f "${base}" )
+            note=dist/READ-ME-FIRST.txt
+            echo "Bunny OS beta - ${base}" > "${note}"
+            echo "" >> "${note}"
+            echo "The image is larger than GitHub's 2 GiB asset limit, so it ships" >> "${note}"
+            echo "as ordered parts. Join them, check the checksum, then flash." >> "${note}"
+            echo "" >> "${note}"
+            echo "  Windows:      copy /b ${base}.01.part+${base}.02.part ${base}" >> "${note}"
+            echo "  Linux/macOS:  cat ${base}.??.part > ${base}" >> "${note}"
+            echo "" >> "${note}"
+            echo "  Verify:       sha256sum -c ${base}.sha256   (or Get-FileHash on Windows)" >> "${note}"
+            echo "  Flash:        Rufus - ISO Image mode, or dd if=${base} of=/dev/sdX bs=4M" >> "${note}"
+            echo "" >> "${note}"
+            echo "On the Steam Deck hold Vol- while powering on to boot the USB device." >> "${note}"
+            echo "The same image is on the Actions tab as an artefact for 14 days." >> "${note}"
+          fi
+          ls -lh dist
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          pre=()
+          case "${GITHUB_REF_NAME}" in
+            *-*) pre=(--prerelease) ;;
+          esac
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
           else
             gh release create "${GITHUB_REF_NAME}" dist/* \
               --title "Bunny OS ${GITHUB_REF_NAME#v}" \
-              --generate-notes
+              --generate-notes "${pre[@]}"
           fi

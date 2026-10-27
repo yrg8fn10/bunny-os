@@ -67,11 +67,14 @@ export function createQuickMenu({ nav, host, viewEl }) {
     root.classList.remove('is-open');
     root.hidden = true;
     document.body.classList.remove('quickmenu-open');
-    // Return focus to whatever view is active *now*. A tile may have navigated
-    // while the menu was open, so the view captured on open is already stale;
-    // restoring it would leave the D-pad pointing at a hidden panel.
-    nav.setScope((viewEl && viewEl()) || document.body);
-    nav.refresh();
+    // Only hand focus back if the menu still owns it. A power tile opens the
+    // confirm dialog synchronously, and that dialog is the new owner - yanking
+    // the D-pad back to the panel would leave the modal unreachable. The view
+    // is read *now* because a navigation tile may have changed it.
+    if (nav.scope === panel) {
+      nav.setScope((viewEl && viewEl()) || document.body);
+      nav.refresh();
+    }
   };
 
   const open = () => {
@@ -86,10 +89,11 @@ export function createQuickMenu({ nav, host, viewEl }) {
 
   const toggle = () => (isOpen ? close() : open());
 
-  // The panel's own click delegation handles the action; closing happens after
-  // it so navigation does not fight the scope restore.
+  // The panel's own click delegation handles the action. Close first, not
+  // after: an action may open a dialog that claims focus from the click
+  // handler, and the menu must not still be the active scope when it does.
   root.addEventListener('click', (event) => {
-    if (event.target.closest('[data-action]')) setTimeout(close, 0);
+    if (event.target.closest('[data-action]')) close();
     else if (event.target === root) close();
   });
 
