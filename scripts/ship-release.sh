@@ -85,6 +85,12 @@ while IFS= read -r -d '' f; do
 done < <(find . -path ./.git -prune -o -name '*.sh' -print0)
 for f in system/bin/* installer/bunny-install launchers/bin/* scripts/*.sh; do
   [[ -f "${f}" ]] || continue
+  # system/bin contains bash and python. Running `bash -n` on a python file is
+  # a syntax error, so check the shebang (or the extension) first.
+  case "${f}" in
+    *.sh|*/bunny-install) ;;
+    *) head -n1 "${f}" 2>/dev/null | grep -qE '^#!.*(bash|/sh)([[:space:]]|$)' || continue ;;
+  esac
   bash -n "${f}" || fail=1
 done
 (( fail == 0 )) || die "shell syntax errors"
