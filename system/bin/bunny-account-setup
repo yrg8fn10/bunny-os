@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  bunny-account-setup — guarantee at least one usable desktop account.
+#  bunny-account-setup — headless fallback for a system with no desktop account.
 #
-#  Runs Before=display-manager.service on every boot until it has succeeded
-#  once, then leaves a marker in /var/lib/bunny. Two situations end up here:
+#  The normal first boot is the graphical wizard (bunny-setupd + bunny-session
+#  setup). This script is only reached from the recovery menu, or manually on a
+#  machine whose display manager cannot start. Two situations end up here:
 #
 #    * an install or migration that produced a root filesystem with no human
 #      account at all (the case that leaves SDDM showing a greeter nobody can
@@ -11,13 +12,14 @@
 #    * a rolled-back root filesystem whose marker went away but whose account
 #      still exists.
 #
-#  It never blocks the boot: without a TTY it logs and exits 0, so a broken
+#  It never blocks a boot: without a TTY it logs and exits 0, so a broken
 #  console cannot wedge the machine.
 # =============================================================================
 set -Eeuo pipefail
 
 STATE_DIR="/var/lib/bunny"
 MARKER="${STATE_DIR}/.account-ready"
+OOBE_MARKER="${STATE_DIR}/.oobe-done"
 SESSION_CONF="/etc/bunny/session.conf"
 LOG="/var/log/bunny-account-setup.log"
 
@@ -27,14 +29,21 @@ exec > >(tee -a "${LOG}") 2>&1
 log()  { printf '[account-setup] %s\n' "$*"; }
 warn() { printf '[account-setup] WARN: %s\n' "$*" >&2; }
 
-# Human accounts: uid in the normal user range, not nobody, not system users.
+# Human accounts: uid in the normal user range, not nobody, not system users,
+# and never the first-boot bootstrap account.
 human_users() {
-  getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1 }'
+  getent passwd \
+    | awk -F: '$3 >= 1000 && $3 < 60000 && $7 !~ /(nologin|false)$/ { print $1 }' \
+    | grep -vxE 'setup|bunny-setup' || true
 }
 
 mark_done() {
   date -u +%FT%TZ > "${MARKER}"
   chmod 0644 "${MARKER}"
+  # Both markers: .account-ready is the legacy signal, .oobe-done is what
+  # bunny-sessiond and bunny-setupd treat as the source of truth.
+  date -u +%FT%TZ > "${OOBE_MARKER}"
+  chmod 0644 "${OOBE_MARKER}"
 }
 
 FIRST_USER="$(human_users | head -n1 || true)"
@@ -75,6 +84,10 @@ while true; do
     warn "use lower-case letters, digits, _ and -, starting with a letter"
     continue
   fi
+  if [[ "${NEW_USER}" == "setup" || "${NEW_USER}" == "bunny-setup" ]]; then
+    warn "'${NEW_USER}' is reserved for the first-boot wizard"
+    continue
+  fi
   if id -u "${NEW_USER}" >/dev/null 2>&1; then
     warn "'${NEW_USER}' already exists"
     continue
@@ -94,9 +107,16 @@ while true; do
 done
 
 log "creating ${NEW_USER}"
+groupadd -f bunny 2>/dev/null || true
+PRIMARY_ARGS=()
+if getent group "${NEW_USER}" >/dev/null 2>&1; then
+  # The group exists (for example the `bunny` group from the live image).
+  # useradd would otherwise try to create it again and abort.
+  PRIMARY_ARGS=(-N -g users)
+fi
 useradd -m -c "${FULL_NAME}" \
-  -G wheel,input,video,audio,render,storage,power,lp \
-  -s /bin/bash "${NEW_USER}"
+  -G wheel,input,video,audio,render,storage,power,lp,bunny \
+  "${PRIMARY_ARGS[@]}" -s /bin/bash "${NEW_USER}"
 printf '%s:%s\n' "${NEW_USER}" "${PW1}" | chpasswd
 unset PW1 PW2
 
@@ -108,6 +128,13 @@ fi
 
 chown -R "${NEW_USER}:${NEW_USER}" "/home/${NEW_USER}"
 
+# Retire the wizard's kiosk account: it must never be a way in once a real
+# account exists.
+if id -u setup >/dev/null 2>&1; then
+  passwd -l setup >/dev/null 2>&1 || true
+  usermod -s /usr/sbin/nologin setup 2>/dev/null || true
+fi
+
 # Keep bunny-sessiond, the panel and SDDM pointed at the account that exists.
 if [[ -f "${SESSION_CONF}" ]]; then
   if grep -q '^BUNNY_USER=' "${SESSION_CONF}"; then
@@ -118,6 +145,7 @@ if [[ -f "${SESSION_CONF}" ]]; then
 fi
 if [[ -f /etc/sddm.conf.d/20-bunny-session.conf ]]; then
   sed -i "s/^User=.*/User=${NEW_USER}/" /etc/sddm.conf.d/20-bunny-session.conf
+  sed -i "s/^Session=.*/Session=bunny-gaming/" /etc/sddm.conf.d/20-bunny-session.conf
 fi
 
 systemctl set-default graphical.target >/dev/null 2>&1 || true

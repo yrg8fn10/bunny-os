@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Bunny OS Setup
+Comment=First-boot setup wizard
+Exec=/usr/local/bin/bunny-session setup
+TryExec=/usr/local/bin/bunny-session
+Type=Application
+DesktopNames=BunnyOS
+Keywords=setup;firstboot;oobe;

@@ -368,7 +368,35 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# 4. Shell
+# 4. Account fallback
+# ---------------------------------------------------------------------------
+# The normal first boot is the graphical wizard. This path exists for a machine
+# whose display manager or cage session cannot start, so the user is not locked
+# out after an install. The script itself refuses to run without a TTY.
+action_account() {
+  hdr "Account fallback - create a desktop account"
+  cat <<'EOF'
+The graphical first-boot wizard is the normal path. Use this only when it
+cannot start (no display manager, broken compositor or a headless machine).
+It creates a wheel account, points SDDM at it and skips the wizard.
+EOF
+  if [[ ! -x /usr/local/bin/bunny-account-setup ]]; then
+    bad "bunny-account-setup is missing from this image"
+    pause
+    return 1
+  fi
+  if ! ensure_tty; then
+    bad "no interactive terminal available (stdin is not a tty)"
+    log "account fallback refused: stdin is not a tty"
+    pause
+    return 1
+  fi
+  /usr/local/bin/bunny-account-setup
+  pause
+}
+
+# ---------------------------------------------------------------------------
+# 5. Shell
 # ---------------------------------------------------------------------------
 action_shell() {
   hdr "Shell"
@@ -476,8 +504,9 @@ menu() {
    1) Clean install          erase a disk, install Bunny OS
    2) Repair                 check filesystems, bootloader, fstab
    3) Migration              install to a new disk, keep your /home
-   4) Shell                  root shell with the live tools
-   5) System information     disks, memory, live medium, self test
+   4) Account fallback       create a desktop account without the wizard
+   5) Shell                  root shell with the live tools
+   6) System information     disks, memory, live medium, self test
    0) Reboot
 EOF
     local c
@@ -492,8 +521,9 @@ EOF
       1) run_action action_install ;;
       2) run_action action_repair ;;
       3) run_action action_migrate ;;
-      4) run_action action_shell ;;
-      5) hdr "System information"
+      4) run_action action_account ;;
+      5) run_action action_shell ;;
+      6) hdr "System information"
          lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,LABEL || true
          free -h || true
          printf '\n'

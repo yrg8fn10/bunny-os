@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en" data-theme="bunny">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Bunny OS first-boot setup">
+  <meta name="bunny-setup-token" content="__BUNNY_SETUP_TOKEN__">
+  <title>Bunny OS — Set up your Deck</title>
+  <link rel="icon" href="../assets/bunny.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="setup.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true">
+    <span class="blob blob--pink"></span>
+    <span class="blob blob--mint"></span>
+    <span class="blob blob--blue"></span>
+    <span class="grain"></span>
+  </div>
+
+  <div id="boot" class="boot" hidden>
+    <img class="boot__mark" src="../assets/bunny.svg" alt="" width="96" height="96">
+    <h1 class="boot__title">Waking the bunny…</h1>
+    <p class="boot__text">The setup service is starting. This takes a moment on first boot.</p>
+    <div class="boot__spinner" aria-hidden="true"></div>
+    <button class="btn btn--ghost" type="button" id="boot-retry" data-focusable>Try again</button>
+  </div>
+
+  <div id="setup" class="setup" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand__mark" src="../assets/bunny.svg" alt="" width="46" height="46">
+        <div class="brand__text">
+          <span class="brand__name">Bunny<span>OS</span></span>
+          <span class="brand__sub" id="version-label">First-boot setup</span>
+        </div>
+      </div>
+      <div class="topbar__meta">
+        <span class="chip chip--target" id="target-label">Steam Deck LCD</span>
+        <span class="chip chip--build" id="build-label">v0.2.0</span>
+      </div>
+    </header>
+
+    <nav class="progress" id="progress" aria-label="Setup progress"></nav>
+
+    <main class="stage" id="stage" aria-live="polite">
+      <section class="step" id="step" data-step="welcome"></section>
+    </main>
+
+    <footer class="actions">
+      <div class="hints" aria-hidden="true">
+        <span class="hint"><kbd>A</kbd> Select</span>
+        <span class="hint"><kbd>B</kbd> Back</span>
+        <span class="hint"><kbd>D-pad</kbd> Move</span>
+        <span class="hint hint--touch"><kbd>Tap</kbd> anything</span>
+      </div>
+      <div class="buttons">
+        <button class="btn btn--ghost" type="button" id="back" data-focusable hidden>Back</button>
+        <button class="btn btn--primary" type="button" id="next" data-focusable>Get started</button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- On-screen keyboard: the Deck has no hardware keyboard in handheld mode. -->
+  <div class="sheet keyboard" id="keyboard" role="dialog" aria-modal="true"
+       aria-label="On-screen keyboard" hidden>
+    <div class="sheet__head">
+      <span class="sheet__title" id="keyboard-title">Type</span>
+      <span class="sheet__value" id="keyboard-value"></span>
+      <button class="sheet__close" type="button" id="keyboard-close" data-focusable
+              aria-label="Close keyboard">Done</button>
+    </div>
+    <div class="keyboard__rows" id="keyboard-rows"></div>
+  </div>
+
+  <!-- Wi-Fi password / hidden network. -->
+  <div class="sheet dialog" id="wifi-dialog" role="dialog" aria-modal="true"
+       aria-label="Join a Wi-Fi network" hidden>
+    <div class="dialog__panel">
+      <div class="dialog__head">
+        <div>
+          <h2 class="dialog__title" id="wifi-title">Join network</h2>
+          <p class="dialog__sub" id="wifi-sub">Enter the Wi-Fi password.</p>
+        </div>
+        <button class="sheet__close" type="button" id="wifi-cancel" data-focusable
+                aria-label="Cancel">Cancel</button>
+      </div>
+      <label class="field">
+        <span class="field__label">Network name</span>
+        <input class="field__input" id="wifi-ssid" type="text" autocomplete="off"
+               spellcheck="false" maxlength="64" readonly>
+      </label>
+      <label class="field">
+        <span class="field__label">Password</span>
+        <input class="field__input" id="wifi-password" type="password"
+               autocomplete="off" spellcheck="false" maxlength="128">
+      </label>
+      <div class="dialog__error" id="wifi-error" role="alert" hidden></div>
+      <div class="dialog__actions">
+        <button class="btn btn--ghost" type="button" id="wifi-skip" data-focusable hidden>
+          Join hidden network
+        </button>
+        <button class="btn btn--primary" type="button" id="wifi-join" data-focusable>
+          Connect
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+
+  <noscript>
+    <p style="padding:2rem;color:#fff">Bunny OS setup needs JavaScript.</p>
+  </noscript>
+
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

@@ -120,7 +120,7 @@ function paintChrome() {
   if ($('agent-label')) $('agent-label').textContent = online ? 'Bun Bun online' : 'Bun Bun offline';
   if ($('runtime-label')) $('runtime-label').textContent = state.connection.label || 'local-only';
 
-  const version = state.status?.version || '0.1.0';
+  const version = state.status?.version || '0.2.0';
   const channel = state.settings?.updates?.channel || 'dev';
   if ($('build-label')) $('build-label').textContent = `v${version} · ${channel}`;
 

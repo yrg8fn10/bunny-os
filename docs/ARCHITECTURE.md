@@ -124,9 +124,18 @@ UEFI/BIOS
        └─ archiso (live) or installed root
             └─ systemd graphical.target
                  └─ sddm.service
-                      ├─ autologin session=bunny-gaming → bunny-session → gamescope → panel
+                      ├─ autologin session=bunny-setup   → bunny-session → cage → wizard (first boot)
+                      ├─ autologin session=bunny-gaming  → bunny-session → gamescope → panel
                       └─ autologin session=bunny-desktop → startplasma-wayland
 ```
+
+First boot on an installed system runs the graphical wizard: `bunny-setupd`
+serves the UI and its loopback API, SDDM autologins the locked `setup` account
+into `bunny-setup`, and the wizard creates the real account, joins Wi-Fi, sets
+the time zone and writes `/var/lib/bunny/.oobe-done`. Only then does the next
+graphical login go to Gaming Mode. A live image boots straight to Gaming Mode;
+boot it with `bunny.oobe=1` (the "Setup Preview" entry) to try the wizard
+without installing.
 
 First boot on an installed system runs `bunny-firstboot.service` (oneshot):
 Flatpak remotes, zram, sysctl tuning, per-user defaults. Live media skips the
@@ -150,9 +159,9 @@ image installed on a Deck stays at 1080p.
 
 | Path | Contents |
 |------|----------|
-| `/usr/local/bin/` | `bunny-session`, `bunny-panel`, `bunny-panel-bridge`, `bunnyctl`, launchers, installer |
+| `/usr/local/bin/` | `bunny-session`, `bunny-panel`, `bunny-panel-bridge`, `bunny-setupd`, `bunnyctl`, launchers, installer |
 | `/usr/local/lib/bunny/` | `bunny_sessiond.py`, `bunny_input_agent.py` |
-| `/opt/bunny/panel/ui/` | the web UI served by the bridge / native shell |
+| `/opt/bunny/panel/ui/` | the web UI served by the bridge / native shell, plus `setup/` for the first-boot wizard |
 | `/opt/bunbun/` | Bun Bun agent source and data |
 | `/etc/bunny/` | `settings.json`, `session.conf`, `target.conf`/`target` (target builds), `build-info.json` |
 | `/etc/systemd/system/` | sessiond, firstboot, update, health, input-agent |

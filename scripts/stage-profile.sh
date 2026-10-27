@@ -251,6 +251,10 @@ PROVENANCE_ARGS=(
 )
 PROVENANCE="$(json_kv "${PROVENANCE_ARGS[@]}")"
 printf '%s\n' "${PROVENANCE}" > "${AIR}/etc/bunny/build-info.json"
+# Minimal version file for helpers that need one line and no JSON parser
+# (recovery, account setup, shell prompts). The JSON above stays authoritative.
+printf '%s\n' "${VERSION}" > "${AIR}/etc/bunny/version"
+chmod 0644 "${AIR}/etc/bunny/version"
 
 # 7. Sanity ---------------------------------------------------------------
 [[ -f "${AIR}/etc/systemd/system/bunny-sessiond.service" ]] \

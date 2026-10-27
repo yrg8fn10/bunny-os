@@ -5,7 +5,7 @@
 
 iso_name="BunnyOS"
 iso_label="BUNNY_OS"
-iso_publisher="Bunny OS Project <https://bunnyos.invalid>"
+iso_publisher="Bunny OS Project <https://github.com/yrg8fn10/bunny-os>"
 iso_application="Bunny OS — controller-first gaming system"
 iso_version="@VERSION@"
 install_dir="arch"

@@ -20,6 +20,20 @@ fi
 echo 'bunny:bunny' | chpasswd
 chown -R bunny:bunny /home/bunny
 
+# --- first-boot bootstrap account -------------------------------------------
+# The wizard runs as an unprivileged kiosk account. Its password is locked, so
+# it can only be entered through SDDM autologin; it is removed (or locked) once
+# the user creates their real account. `setup` is reserved by bunny-setupd.
+if ! id -u setup >/dev/null 2>&1; then
+  useradd -m -c "Bunny OS Setup" \
+    -G input,video,audio,render,storage,power,lp \
+    -s /bin/bash setup
+fi
+passwd -l setup >/dev/null 2>&1 || true
+chown -R setup:setup /home/setup
+printf 'setup\n' > /etc/bunny/oobe-bootstrap
+chmod 0644 /etc/bunny/oobe-bootstrap
+
 # --- permissions ------------------------------------------------------------
 chmod 0755 /usr/local/bin/* 2>/dev/null || true
 chmod 0755 /opt/bunbun/bin/bunbun-cli 2>/dev/null || true
@@ -37,8 +51,10 @@ systemctl set-default graphical.target
 systemctl enable bunny-sessiond.service
 # first boot: flatpaks, zram, sysctl tuning, per-user defaults
 systemctl enable bunny-firstboot.service
-# safety net: prompt for an account if the image ever boots without one
-systemctl enable bunny-setup.service
+# graphical first-boot wizard (loopback API + kiosk UI). The text account
+# prompt is only a recovery/headless fallback now, never an automatic path.
+systemctl enable bunny-setupd.service
+systemctl disable bunny-setup.service 2>/dev/null || true
 # console menu, only reachable from the "Recovery & Maintenance" boot entry
 systemctl enable bunny-recovery.service
 systemctl enable bunny-update.timer
@@ -94,6 +110,13 @@ systemctl enable bunny-live.target
 install -d -m 0755 /var/lib/bunny
 date -u +%FT%TZ > /var/lib/bunny/.account-ready
 chmod 0644 /var/lib/bunny/.account-ready
+
+# The live image boots straight to Gaming Mode as the throwaway bunny user.
+# The wizard only runs on an installed system, or when the live medium is
+# explicitly booted with bunny.oobe=1 to preview it. The installer deletes this
+# marker from the target so the first real boot autologins the setup account.
+date -u +%FT%TZ > /var/lib/bunny/.oobe-done
+chmod 0644 /var/lib/bunny/.oobe-done
 
 # A handheld is offline more often than not. Anything that waits for a default
 # route turns a 20 second boot into a two minute one, so the wait-online helpers

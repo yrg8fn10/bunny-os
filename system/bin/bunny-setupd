@@ -1,0 +1,828 @@
+#!/usr/bin/env python3
+"""bunny-setupd — the privileged backend for the Bunny OS first-boot wizard.
+
+The wizard is a plain web UI rendered by Chromium in a cage kiosk.  This
+process is the part that needs root: it owns the loopback HTTP API, talks to
+NetworkManager, changes the timezone and creates the desktop account.
+
+Design rules
+------------
+* Loopback only.  The socket is never reachable from the network.
+* The UI is served by this process, so it can inject a per-boot token.  Every
+  state-changing request must present that token in ``X-Bunny-Setup``; a
+  website the kiosk happens to load cannot forge a request.
+* Nothing is written until the matching step succeeds.  A failed Wi-Fi join
+  leaves the machine exactly as it was.
+* Passwords never reach argv, the environment, the journal or the audit log.
+  They are written to ``chpasswd`` over stdin.
+* The unit runs before the display manager and exits as soon as the marker is
+  written.  A normal boot therefore pays no cost.
+
+Usage:
+    bunny-setupd [--port 8430] [--ui /opt/bunny/panel/ui]
+                 [--state-dir /var/lib/bunny] [--force] [--check]
+"""
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import logging
+import mimetypes
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+VERSION_FALLBACK = "0.2.0"
+PRODUCT = "Bunny OS"
+MAX_BODY = 32 * 1024
+BOOTSTRAP_USERS = {"setup", "bunny-setup"}
+VALID_USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+VALID_ZONE = re.compile(r"^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$")
+GROUP_ORDER = ("wheel", "input", "video", "audio", "render", "storage", "power", "lp", "bunny")
+
+LOG = logging.getLogger("bunny-setupd")
+
+
+# ---------------------------------------------------------------------------
+# small helpers
+# ---------------------------------------------------------------------------
+def run(cmd: list[str], *, timeout: float = 30.0, data: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env.update({"LANG": "C", "LC_ALL": "C", "HOME": "/root", "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"})
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          input=data, env=env, check=False)
+
+
+def read_text(path: Path, default: str = "") -> str:
+    try:
+        return path.read_text("utf-8").strip()
+    except OSError:
+        return default
+
+
+def build_info(etc: Path) -> dict:
+    try:
+        return json.loads((etc / "build-info.json").read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def parse_kernel_cmdline() -> str:
+    try:
+        return Path("/proc/cmdline").read_text("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def human_users() -> list[str]:
+    """Real desktop accounts, excluding the bootstrap setup account."""
+    users: list[str] = []
+    try:
+        entries = Path("/etc/passwd").read_text("utf-8").splitlines()
+    except OSError:
+        return users
+    for line in entries:
+        parts = line.split(":")
+        if len(parts) < 7:
+            continue
+        name, _, uid_s, _, _, home, shell = parts[:7]
+        if not uid_s.isdigit():
+            continue
+        uid = int(uid_s)
+        if uid < 1000 or uid >= 60000:
+            continue
+        if name in BOOTSTRAP_USERS:
+            continue
+        if shell.endswith(("nologin", "false")):
+            continue
+        if not home.startswith("/"):
+            continue
+        users.append(name)
+    return users
+
+
+def group_list() -> str:
+    available = []
+    try:
+        text = Path("/etc/group").read_text("utf-8")
+        names = {line.split(":", 1)[0] for line in text.splitlines() if ":" in line}
+    except OSError:
+        names = set()
+    for name in GROUP_ORDER:
+        if name in names:
+            available.append(name)
+    return ",".join(available)
+
+
+def unescape_nmcli(value: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        if value[i] == "\\" and i + 1 < len(value):
+            out.append(value[i + 1])
+            i += 2
+        else:
+            out.append(value[i])
+            i += 1
+    return "".join(out)
+
+
+def split_nmcli(line: str) -> list[str]:
+    """Split a terse nmcli line on unescaped colons."""
+    fields: list[str] = []
+    current: list[str] = []
+    i = 0
+    while i < len(line):
+        char = line[i]
+        if char == "\\" and i + 1 < len(line):
+            current.append(line[i:i + 2])
+            i += 2
+        elif char == ":":
+            fields.append(unescape_nmcli("".join(current)))
+            current = []
+            i += 1
+        else:
+            current.append(char)
+            i += 1
+    fields.append(unescape_nmcli("".join(current)))
+    return fields
+
+
+# ---------------------------------------------------------------------------
+# backend
+# ---------------------------------------------------------------------------
+class SetupService:
+    def __init__(self, *, state_dir: Path, etc_dir: Path, dry_run: bool = False) -> None:
+        self.state_dir = state_dir
+        self.etc_dir = etc_dir
+        self.dry_run = dry_run
+        # Overridable so the setup service can be exercised off-target; on a
+        # real image this is the system tzdata directory.
+        self.zoneinfo = Path("/usr/share/zoneinfo")
+        self.marker = state_dir / ".oobe-done"
+        self.account_ready = state_dir / ".account-ready"
+        self.session_conf = etc_dir / "session.conf"
+        self.sddm_dropin = Path("/etc/sddm.conf.d/20-bunny-session.conf")
+        self.preview_done = Path("/run/bunny/oobe-preview-done")
+        self._network_cache: tuple[float, list[dict]] = (0.0, [])
+        self._lock = threading.RLock()
+        self._started = time.time()
+        self.version = self._read_version()
+        self.info = build_info(etc_dir)
+
+    # -- environment -------------------------------------------------------
+    def _read_version(self) -> str:
+        info = build_info(self.etc_dir)
+        version = str(info.get("version") or "").strip()
+        if version:
+            return version
+        for line in read_text(Path("/etc/os-release")).splitlines():
+            if line.startswith("VERSION_ID="):
+                return line.split("=", 1)[1].strip().strip('"')
+        return VERSION_FALLBACK
+
+    def preview(self) -> bool:
+        """True when the live image was booted with bunny.oobe=1."""
+        if self.preview_done.exists():
+            return False
+        return "bunny.oobe=1" in parse_kernel_cmdline().split()
+
+    def live(self) -> bool:
+        return Path("/run/archiso").exists()
+
+    def pending(self) -> bool:
+        return not self.marker.exists() or self.preview()
+
+    def bootstrap_user(self) -> str:
+        configured = read_text(self.etc_dir / "oobe-bootstrap")
+        if configured:
+            return configured
+        if shutil.which("id") and self._user_exists("setup"):
+            return "setup"
+        return "bunny"
+
+    def _user_exists(self, name: str) -> bool:
+        try:
+            return any(line.split(":", 1)[0] == name
+                       for line in Path("/etc/passwd").read_text("utf-8").splitlines())
+        except OSError:
+            return False
+
+    def setup_user(self) -> str:
+        """The account SDDM autologins into for the wizard."""
+        configured = read_text(self.etc_dir / "oobe-bootstrap")
+        if configured and self._user_exists(configured):
+            return configured
+        if self._user_exists("setup"):
+            return "setup"
+        users = human_users()
+        return users[0] if users else "setup"
+
+    def session_user(self) -> str:
+        for line in read_text(self.session_conf).splitlines():
+            if line.startswith("BUNNY_USER="):
+                value = line.split("=", 1)[1].strip().strip('"')
+                if value and self._user_exists(value):
+                    return value
+        users = human_users()
+        return users[0] if users else "setup"
+
+    def timezone(self) -> str:
+        result = run(["timedatectl", "show", "-p", "Timezone", "--value"], timeout=5)
+        value = result.stdout.strip() if result.returncode == 0 else ""
+        return value or "UTC"
+
+    # -- network -----------------------------------------------------------
+    def network_status(self) -> dict:
+        status = {"connected": False, "kind": None, "ssid": "", "ip": "", "signal": 0,
+                  "device": "", "connection": ""}
+        if not shutil.which("nmcli"):
+            return status
+        result = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"], timeout=8)
+        if result.returncode != 0:
+            return status
+        for line in result.stdout.splitlines():
+            parts = split_nmcli(line)
+            if len(parts) < 4:
+                continue
+            device, kind, state, connection = parts[:4]
+            if state != "connected" or kind not in ("wifi", "ethernet"):
+                continue
+            status.update({"connected": True, "kind": kind, "device": device,
+                           "connection": connection})
+            break
+        if not status["connected"]:
+            return status
+
+        address = run(["nmcli", "-g", "IP4.ADDRESS", "device", "show", status["device"]], timeout=8)
+        if address.returncode == 0:
+            status["ip"] = address.stdout.splitlines()[0] if address.stdout.strip() else ""
+
+        if status["kind"] == "wifi":
+            active = run(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi"], timeout=8)
+            if active.returncode == 0:
+                for line in active.stdout.splitlines():
+                    parts = split_nmcli(line)
+                    if len(parts) >= 3 and parts[0] == "yes":
+                        status["ssid"] = parts[1]
+                        try:
+                            status["signal"] = int(parts[2])
+                        except ValueError:
+                            status["signal"] = 0
+                        break
+        return status
+
+    def scan_networks(self, *, rescan: bool = True) -> list[dict]:
+        now = time.time()
+        with self._lock:
+            cached_at, cached = self._network_cache
+            if not rescan and now - cached_at < 20:
+                return cached
+        if not shutil.which("nmcli"):
+            return []
+        cmd = ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list"]
+        if rescan:
+            cmd += ["--rescan", "yes"]
+        result = run(cmd, timeout=45)
+        if result.returncode != 0:
+            LOG.warning("nmcli scan failed: %s", result.stderr.strip()[:200])
+            return []
+        by_ssid: dict[str, dict] = {}
+        for line in result.stdout.splitlines():
+            parts = split_nmcli(line)
+            if len(parts) < 3:
+                continue
+            ssid, signal_s, security = parts[0], parts[1], parts[2]
+            if not ssid or ssid.startswith("--"):
+                continue
+            try:
+                signal = int(signal_s)
+            except ValueError:
+                signal = 0
+            secured = bool(security.strip()) and security.strip() not in ("--", "")
+            entry = by_ssid.get(ssid)
+            if entry is None or signal > entry["signal"]:
+                by_ssid[ssid] = {
+                    "ssid": ssid,
+                    "signal": signal,
+                    "security": security.strip() if secured else "",
+                    "secured": secured,
+                    "open": not secured,
+                }
+        networks = sorted(by_ssid.values(), key=lambda n: (-n["signal"], n["ssid"].lower()))
+        with self._lock:
+            self._network_cache = (time.time(), networks)
+        return networks
+
+    def connect(self, ssid: str, password: str, hidden: bool = False) -> dict:
+        if not shutil.which("nmcli"):
+            raise SetupError("NetworkManager is not installed on this system.")
+        ssid = ssid.strip()
+        if not ssid or len(ssid) > 64:
+            raise SetupError("That network name is not valid.")
+        if len(password) > 256:
+            raise SetupError("That password is too long.")
+        cmd = ["nmcli", "--wait", "45", "device", "wifi", "connect", ssid]
+        if password:
+            cmd += ["password", password]
+        if hidden:
+            cmd += ["hidden", "yes"]
+        result = run(cmd, timeout=60)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            message = detail[-1] if detail else "NetworkManager refused the connection."
+            message = re.sub(r"password[^ ]*", "password", message, flags=re.IGNORECASE)
+            raise SetupError(message[:240])
+        status = self.network_status()
+        if not status["connected"]:
+            raise SetupError("The access point accepted the request but no link came up.")
+        return status
+
+    # -- timezone ----------------------------------------------------------
+    def timezones(self) -> list[dict]:
+        seen: set[str] = set()
+        zones: list[dict] = []
+        try:
+            tab = (self.zoneinfo / "zone.tab").read_text("utf-8")
+        except OSError:
+            tab = ""
+        for line in tab.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            zone = parts[2].strip()
+            if not zone or zone in seen:
+                continue
+            seen.add(zone)
+            city = zone.rsplit("/", 1)[-1].replace("_", " ")
+            region = zone.split("/", 1)[0] if "/" in zone else "Other"
+            zones.append({"zone": zone, "region": region, "city": city})
+        if "UTC" not in seen:
+            zones.insert(0, {"zone": "UTC", "region": "Other", "city": "UTC"})
+        zones.sort(key=lambda z: z["zone"].lower())
+        return zones
+
+    def set_timezone(self, zone: str) -> str:
+        zone = zone.strip()
+        if not zone or len(zone) > 64 or not VALID_ZONE.match(zone):
+            raise SetupError("That time zone name is not valid.")
+        target = (self.zoneinfo / zone).resolve()
+        root = self.zoneinfo.resolve()
+        if root not in target.parents or not target.is_file():
+            raise SetupError("Unknown time zone.")
+        if self.dry_run:
+            return zone
+        result = run(["timedatectl", "set-timezone", zone], timeout=15)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip() or "timedatectl failed"
+            raise SetupError(detail[:240])
+        return zone
+
+    # -- account -----------------------------------------------------------
+    def validate_account(self, username: str, full_name: str, password: str) -> None:
+        if not VALID_USERNAME.match(username or ""):
+            raise SetupError("Use lower-case letters, digits, _ or -, starting with a letter.")
+        if username in BOOTSTRAP_USERS:
+            raise SetupError("That name is reserved for the setup account.")
+        if self._user_exists(username):
+            raise SetupError(f"'{username}' already exists on this system.")
+        if len(password or "") < 8:
+            raise SetupError("Use at least 8 characters for the password.")
+        if len(password) > 512:
+            raise SetupError("That password is too long.")
+        if any(ord(ch) < 32 for ch in full_name):
+            raise SetupError("The full name contains control characters.")
+        if len(full_name) > 64:
+            raise SetupError("Keep the full name under 64 characters.")
+
+    def create_account(self, username: str, full_name: str, password: str) -> dict:
+        self.validate_account(username, full_name, password)
+        if self.dry_run:
+            return {"username": username, "created": False, "dry_run": True}
+
+        # A migration or a hand-built rootfs can arrive without the group that
+        # owns the session socket; create it before adding the user to it.
+        run(["groupadd", "-f", "bunny"], timeout=10)
+        groups = group_list()
+        try:
+            group_names = {
+                line.split(":", 1)[0]
+                for line in Path("/etc/group").read_text("utf-8").splitlines()
+                if ":" in line
+            }
+        except OSError:
+            group_names = set()
+
+        cmd = ["useradd", "-m", "-c", full_name or "Bunny OS"]
+        # useradd creates a same-named group by default. Group `bunny` already
+        # exists and owns the session socket, so a user literally named "bunny"
+        # would otherwise abort with "group bunny exists".
+        if username in group_names:
+            primary = "users" if "users" in group_names else username
+            cmd += ["-N", "-g", primary]
+        if groups:
+            cmd += ["-G", groups]
+        cmd += ["-s", "/bin/bash", username]
+        result = run(cmd, timeout=30)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip() or "useradd failed"
+            raise SetupError(detail[:240])
+
+        result = run(["chpasswd"], timeout=15, data=f"{username}:{password}\n")
+        if result.returncode != 0:
+            run(["userdel", "-r", username], timeout=30)
+            detail = (result.stderr or result.stdout).strip() or "chpasswd failed"
+            raise SetupError(detail[:240])
+
+        sudoers = Path("/etc/sudoers.d/10-wheel")
+        if not sudoers.exists() and not self.dry_run:
+            sudoers.write_text("%wheel ALL=(ALL:ALL) ALL\n", "utf-8")
+            os.chmod(sudoers, 0o440)
+
+        self._point_session_at(username)
+        return {"username": username, "created": True}
+
+    def _point_session_at(self, username: str) -> None:
+        lines: list[str] = []
+        found = False
+        for line in read_text(self.session_conf).splitlines():
+            if line.startswith("BUNNY_USER="):
+                lines.append(f"BUNNY_USER={username}")
+                found = True
+            else:
+                lines.append(line)
+        if not found:
+            lines.append(f"BUNNY_USER={username}")
+        if not self.dry_run:
+            self.session_conf.write_text("\n".join(lines) + "\n", "utf-8")
+
+    # -- finish ------------------------------------------------------------
+    def write_dropin(self, user: str, session: str) -> None:
+        content = (
+            "# Generated by bunny-setupd after the first-boot wizard.\n"
+            "# bunny-sessiond owns this file again from the next boot.\n"
+            f"[Autologin]\nUser={user}\nSession={session}\nRelogin=false\n"
+        )
+        if self.dry_run:
+            LOG.info("[dry-run] drop-in User=%s Session=%s", user, session)
+            return
+        self.sddm_dropin.parent.mkdir(parents=True, exist_ok=True)
+        self.sddm_dropin.write_text(content, "utf-8")
+        os.chmod(self.sddm_dropin, 0o644)
+
+    def finish(self) -> dict:
+        users = human_users()
+        if self.preview():
+            target = users[0] if users else self.session_user()
+            session = "bunny-gaming"
+        else:
+            if not users:
+                raise SetupError("Create a desktop account before finishing.")
+            target = self.session_user()
+            session = "bunny-gaming"
+        if self.dry_run:
+            return {"user": target, "session": session, "dry_run": True}
+
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.marker.write_text(stamp + "\n", "utf-8")
+        self.account_ready.write_text(stamp + "\n", "utf-8")
+        os.chmod(self.marker, 0o644)
+        os.chmod(self.account_ready, 0o644)
+        if self.preview():
+            self.preview_done.parent.mkdir(parents=True, exist_ok=True)
+            self.preview_done.write_text(stamp + "\n", "utf-8")
+            # The live bootstrap account stays; it is the account the user is
+            # already using in preview mode.
+        else:
+            for bootstrap in BOOTSTRAP_USERS:
+                if self._user_exists(bootstrap) and bootstrap != target:
+                    run(["usermod", "-L", "-s", "/usr/sbin/nologin", bootstrap], timeout=15)
+
+        self.write_dropin(target, session)
+        return {"user": target, "session": session, "preview": self.preview()}
+
+    def state(self) -> dict:
+        users = human_users()
+        status = self.network_status()
+        return {
+            "ok": True,
+            "product": PRODUCT,
+            "version": self.version,
+            "channel": str(self.info.get("channel") or "stable"),
+            "build_id": str(self.info.get("build_id") or ""),
+            "target": str(self.info.get("target") or "generic"),
+            "target_name": str(self.info.get("target_name") or "PC"),
+            "mode": "preview" if self.preview() else ("oobe" if not self.marker.exists() else "done"),
+            "live": self.live(),
+            "preview": self.preview(),
+            "done": self.marker.exists(),
+            "needs_account": not users,
+            "existing_user": users[0] if users else None,
+            "bootstrap_user": self.setup_user(),
+            "network": status,
+            "timezone": self.timezone(),
+            "uptime": int(time.time() - self._started),
+        }
+
+    def audit(self, action: str, detail: str = "") -> None:
+        LOG.info("action=%s %s", action, detail)
+
+
+class SetupError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+class SetupHandler(BaseHTTPRequestHandler):
+    server_version = f"bunny-setupd/{VERSION_FALLBACK}"
+    sys_version = ""
+    service: SetupService
+    ui_root: Path
+    token: str
+
+    # -- plumbing ----------------------------------------------------------
+    def _host_ok(self) -> bool:
+        host = (self.headers.get("Host") or "").split(":")[0].lower()
+        return host in {"127.0.0.1", "localhost", "[::1]"}
+
+    def _token_ok(self) -> bool:
+        supplied = self.headers.get("X-Bunny-Setup") or ""
+        return secrets.compare_digest(supplied, self.token)
+
+    def _common_headers(self) -> None:
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'self'; img-src 'self' data:; "
+                         "style-src 'self' 'unsafe-inline'; script-src 'self'; "
+                         "connect-src 'self'; font-src 'self'; frame-ancestors 'none'")
+
+    def _json(self, status: int, payload: dict) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self._common_headers()
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        LOG.debug("%s - %s", self.address_string(), fmt % args)
+
+    # -- static UI ---------------------------------------------------------
+    def _serve_static(self, route: str) -> None:
+        root = self.ui_root.resolve()
+        relative = unquote(route).lstrip("/")
+        if not relative or relative.endswith("/"):
+            relative += "index.html"
+        target = (root / relative).resolve()
+        if target != root and root not in target.parents:
+            self._json(403, {"ok": False, "error": "path outside the UI root"})
+            return
+        if not target.is_file():
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        try:
+            body = target.read_bytes()
+        except OSError as exc:
+            self._json(500, {"ok": False, "error": f"read failed: {exc}"})
+            return
+
+        # index.html carries the per-boot token.  Rendering it here means the
+        # token never sits in a file a stray process could read.
+        if route in {"/setup/", "/setup/index.html", "/setup"}:
+            text = body.decode("utf-8")
+            text = text.replace("__BUNNY_SETUP_TOKEN__", html.escape(self.token, quote=True))
+            body = text.encode("utf-8")
+
+        ctype = MIME.get(target.suffix.lower()) or mimetypes.guess_type(str(target))[0] \
+            or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self._common_headers()
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    # -- routes ------------------------------------------------------------
+    def do_GET(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self._json(403, {"ok": False, "error": "bad host"})
+            return
+        route = urlparse(self.path).path
+        if route in {"", "/"}:
+            self.send_response(302)
+            self.send_header("Location", "/setup/")
+            self.send_header("Content-Length", "0")
+            self._common_headers()
+            self.end_headers()
+            return
+        if route == "/api/health":
+            state = self.service.state()
+            self._json(200, {
+                "ok": True,
+                "service": "bunny-setupd",
+                "version": state["version"],
+                "mode": state["mode"],
+                "preview": state["preview"],
+                "pending": self.service.pending(),
+            })
+            return
+        if route in {"/api/state", "/api/networks", "/api/timezones"}:
+            if not self._token_ok():
+                self._json(403, {"ok": False, "error": "missing setup token"})
+                return
+            try:
+                if route == "/api/state":
+                    self._json(200, self.service.state())
+                elif route == "/api/networks":
+                    self._json(200, {"ok": True,
+                                     "networks": self.service.scan_networks(),
+                                     "status": self.service.network_status()})
+                else:
+                    self._json(200, {"ok": True, "timezones": self.service.timezones()})
+            except SetupError as exc:
+                self._json(400, {"ok": False, "error": str(exc)})
+            return
+        if route.startswith("/api/"):
+            self._json(404, {"ok": False, "error": "not found"})
+            return
+        self._serve_static(route)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._host_ok() or not self._token_ok():
+            self._json(403, {"ok": False, "error": "bad host or missing setup token"})
+            return
+        route = urlparse(self.path).path
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_BODY:
+            self._json(413, {"ok": False, "error": "bad content length"})
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json(400, {"ok": False, "error": "invalid json"})
+            return
+        if not isinstance(body, dict):
+            self._json(400, {"ok": False, "error": "body must be an object"})
+            return
+
+        try:
+            if route == "/api/connect":
+                ssid = str(body.get("ssid") or "")
+                password = str(body.get("password") or "")
+                hidden = bool(body.get("hidden"))
+                status = self.service.connect(ssid, password, hidden)
+                self.service.audit("network.connect", f"ssid={ssid!r}")
+                self._json(200, {"ok": True, "network": status})
+            elif route == "/api/timezone":
+                zone = self.service.set_timezone(str(body.get("zone") or ""))
+                self.service.audit("timezone.set", zone)
+                self._json(200, {"ok": True, "timezone": zone})
+            elif route == "/api/account":
+                result = self.service.create_account(
+                    str(body.get("username") or ""),
+                    str(body.get("full_name") or ""),
+                    str(body.get("password") or ""),
+                )
+                self.service.audit("account.create", result.get("username", ""))
+                self._json(200, {"ok": True, **result})
+            elif route == "/api/finish":
+                result = self.service.finish()
+                self.service.audit("finish", result.get("user", ""))
+                self._json(200, {"ok": True, **result})
+                threading.Thread(target=self._restart_display, daemon=True).start()
+            elif route == "/api/power":
+                action = str(body.get("action") or "")
+                if action not in {"reboot", "poweroff"}:
+                    raise SetupError("unknown power action")
+                self.service.audit("power", action)
+                self._json(200, {"ok": True, "action": action})
+                subprocess.Popen(["systemctl", "--no-block", action], close_fds=True)
+            else:
+                self._json(404, {"ok": False, "error": "not found"})
+        except SetupError as exc:
+            self._json(400, {"ok": False, "error": str(exc)})
+        except (OSError, subprocess.SubprocessError) as exc:
+            LOG.exception("setup action failed")
+            self._json(500, {"ok": False, "error": str(exc)[:240]})
+
+    def _restart_display(self) -> None:
+        # Give the response time to leave the socket before SDDM tears the
+        # session down.  The kiosk browser dies here; this process does not.
+        time.sleep(1.5)
+        for cmd in (["systemctl", "restart", "bunny-sessiond.service"],
+                    ["systemctl", "restart", "sddm.service"]):
+            try:
+                run(cmd, timeout=45)
+            except (OSError, subprocess.SubprocessError):
+                LOG.exception("could not run %s", " ".join(cmd))
+        self.server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# entry point
+# ---------------------------------------------------------------------------
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Bunny OS first-boot setup service")
+    parser.add_argument("--port", type=int, default=8430)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--ui", type=Path, default=Path("/opt/bunny/panel/ui"))
+    parser.add_argument("--state-dir", type=Path, default=Path("/var/lib/bunny"))
+    parser.add_argument("--etc-dir", type=Path, default=Path("/etc/bunny"))
+    parser.add_argument("--force", action="store_true",
+                        help="serve even when .oobe-done exists (development)")
+    parser.add_argument("--check", action="store_true",
+                        help="exit 0 when the wizard should run, 1 when it should not")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
+
+    service = SetupService(state_dir=args.state_dir, etc_dir=args.etc_dir,
+                           dry_run=os.environ.get("BUNNY_SETUP_DRY_RUN") == "1")
+    if args.check:
+        return 0 if (service.pending() or args.force) else 1
+    if not service.pending() and not args.force:
+        LOG.info("setup already complete; nothing to do")
+        return 0
+
+    token = secrets.token_urlsafe(32)
+    token_path = Path("/run/bunny/setup-token")
+    try:
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(token + "\n", "utf-8")
+        os.chmod(token_path, 0o600)
+    except OSError:
+        LOG.warning("could not persist the setup token to %s", token_path)
+
+    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("refusing to bind a non-loopback address")
+    if not args.ui.is_dir():
+        LOG.warning("UI directory does not exist: %s", args.ui)
+
+    SetupHandler.service = service
+    SetupHandler.ui_root = args.ui
+    SetupHandler.token = token
+    server = ThreadingHTTPServer((args.host, args.port), SetupHandler)
+    server.daemon_threads = True
+    LOG.info("%s %s listening on http://%s:%s (mode=%s, ui=%s)",
+             PRODUCT, service.version, args.host, args.port,
+             service.state()["mode"], args.ui)
+    try:
+        server.serve_forever(poll_interval=0.4)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

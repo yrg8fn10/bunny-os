@@ -42,19 +42,42 @@ ROOT_UUID="11111111-2222-3333-4444-555555555555"; EXTRA_KERNEL_ARGS=""
 export TARGET TIMEZONE LOCALE HOSTNAME USERNAME ROOT_UUID EXTRA_KERNEL_ARGS
 
 sed -n "${start},${end}p" installer/bunny-install > "${tmp}/frag.sh"
-if ! bash "${tmp}/frag.sh"; then
-  echo "installer-smoke: rendering the heredoc failed" >&2
-  exit 1
-fi
-script="${TARGET}/root/bunny-postinstall.sh"
-[[ -s "${script}" ]] || { echo "installer-smoke: heredoc produced no file" >&2; exit 1; }
+
+# Render both account modes exactly the way bunny-install does. OOBE=1 is the
+# default (the wizard creates the account); OOBE=0 is the --user/BUNNY_PASSWORD
+# path. Both bodies end up in the file because the condition is resolved at
+# runtime, so this proves neither branch has a syntax error.
+render() { # render <oobe> <username>
+  local oobe="$1" user="$2" target="${tmp}/target-${1}"
+  mkdir -p "${target}/root"
+  TARGET="${target}" USERNAME="${user}" OOBE="${oobe}" \
+    bash "${tmp}/frag.sh" || return 1
+  printf '%s' "${target}/root/bunny-postinstall.sh"
+}
+
+script="$(render 1 "")" || { echo "installer-smoke: rendering the OOBE heredoc failed" >&2; exit 1; }
+legacy="$(render 0 "bunny")" || { echo "installer-smoke: rendering the account heredoc failed" >&2; exit 1; }
+[[ -s "${script}" && -s "${legacy}" ]] \
+  || { echo "installer-smoke: heredoc produced no file" >&2; exit 1; }
 
 # 1. the generated script must be valid bash
-if bash -n "${script}" 2>"${tmp}/err"; then
-  check "generated post-install script parses" ok ok
+if bash -n "${script}" 2>"${tmp}/err" && bash -n "${legacy}" 2>>"${tmp}/err"; then
+  check "generated post-install scripts parse" ok ok
 else
-  check "generated post-install script parses" ok "syntax error: $(head -n2 "${tmp}/err" | tr '\n' ' ')"
+  check "generated post-install scripts parse" ok "syntax error: $(head -n2 "${tmp}/err" | tr '\n' ' ')"
 fi
+
+# 2. the OOBE path must hand first boot to the wizard and delete the live login
+check "OOBE install drops the live bunny user" "yes" \
+  "$(grep -q 'userdel bunny' "${script}" && echo yes || echo no)"
+check "OOBE install clears the wizard marker" "yes" \
+  "$(grep -q 'rm -f /var/lib/bunny/.oobe-done' "${script}" && echo yes || echo no)"
+check "OOBE install seeds the setup session" "yes" \
+  "$(grep -q 'SDDM_SESSION=bunny-setup' "${script}" && echo yes || echo no)"
+check "OOBE install enables bunny-setupd" "yes" \
+  "$(grep -q 'systemctl enable bunny-setupd.service' "${script}" && echo yes || echo no)"
+check "OOBE install disables the text prompt" "yes" \
+  "$(grep -q 'systemctl disable bunny-setup.service' "${script}" && echo yes || echo no)"
 
 # 2. the archiso initramfs drop-in has to go before mkinitcpio runs, otherwise
 #    the installed system builds an initramfs that looks for the USB stick.

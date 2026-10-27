@@ -4,21 +4,26 @@
 #
 #  This is a whole-disk installer. It erases the selected drive, creates a
 #  512 MiB ESP plus a Btrfs root with @/@home/@var/@snapshots subvolumes, then
-#  copies the running live image, writes an fstab, creates the user, enables
-#  the Bunny OS units and installs systemd-boot.
+#  copies the running live image, writes an fstab, enables the Bunny OS units
+#  and installs systemd-boot.
+#
+#  By default it does NOT create a user: the target boots into the graphical
+#  first-boot wizard, which asks for a network, a time zone and the real
+#  desktop account. Pass --user and BUNNY_PASSWORD (or answer the prompts) to
+#  pre-create the account and skip the wizard, e.g. for fleet installs.
 #
 #  It deliberately does NOT support dual-boot, encryption or BIOS firmware yet.
 #  Refusing loudly is better than half-installing next to someone's data.
 #
-#  Usage: bunny-install [--disk /dev/nvme0n1] [--hostname NAME] [--user NAME]
-#                       [--timezone Area/City] [--locale en_US.UTF-8]
-#                       [--yes] [--dry-run]
+#  Usage: bunny-install [--disk /dev/nvme0n1] [--hostname NAME]
+#                       [--user NAME] [--timezone Area/City]
+#                       [--locale en_US.UTF-8] [--yes] [--dry-run]
 # =============================================================================
 set -Eeuo pipefail
 
 DISK=""
 HOSTNAME="bunnyos"
-USERNAME="bunny"
+USERNAME=""
 TIMEZONE="UTC"
 LOCALE="en_US.UTF-8"
 ASSUME_YES=0
@@ -26,9 +31,10 @@ DRY_RUN=0
 TARGET="/mnt"
 PASSWORD="${BUNNY_PASSWORD:-}"
 KEEP_HOME_FROM=""
+OOBE=1
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while (( $# > 0 )); do
@@ -64,8 +70,16 @@ fi
 
 # Values below are interpolated into a chroot script and an SDDM drop-in, so
 # refuse anything that is not a plain POSIX-ish account or hostname.
-[[ "${USERNAME}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
-  || die "invalid username '${USERNAME}' (lower-case letters, digits, _ and -, max 32)"
+# A pre-created account is opt-in. With neither --user nor a password the
+# target boots into the wizard and the account is created there.
+if [[ -n "${USERNAME}" || -n "${PASSWORD}" ]]; then
+  OOBE=0
+fi
+if (( ! OOBE )); then
+  [[ -n "${USERNAME}" ]] || die "BUNNY_PASSWORD was set but --user is missing"
+  [[ "${USERNAME}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+    || die "invalid username '${USERNAME}' (lower-case letters, digits, _ and -, max 32)"
+fi
 [[ "${HOSTNAME}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] \
   || die "invalid hostname '${HOSTNAME}'"
 [[ "${TIMEZONE}" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] \
@@ -145,8 +159,8 @@ cat <<EOF
     ESP         ${ESP}   512 MiB, FAT32, systemd-boot
     root        ${ROOT}  remaining space, Btrfs (@, @home, @var, @snapshots)
     hostname    ${HOSTNAME}
-    user        ${USERNAME} (wheel, audio, video, input, render)
-    timezone    ${TIMEZONE}
+    account     $( (( OOBE )) && echo "created by the first-boot wizard" || echo "${USERNAME} (wheel, audio, video, input, render)" )
+    timezone    ${TIMEZONE} (the wizard can change it)
     locale      ${LOCALE}
 
   There is no dual-boot and no disk encryption in this version.
@@ -164,7 +178,7 @@ if (( ! ASSUME_YES )); then
   [[ "${answer}" == "ERASE" ]] || die "cancelled"
 fi
 
-if [[ -z "${PASSWORD}" ]]; then
+if (( ! OOBE )) && [[ -z "${PASSWORD}" ]]; then
   (( ! ASSUME_YES )) || die "set BUNNY_PASSWORD for an unattended install"
   while true; do
     read -r -s -p "Password for ${USERNAME}: " PW1; echo
@@ -175,7 +189,7 @@ if [[ -z "${PASSWORD}" ]]; then
     break
   done
 fi
-unset PW1 PW2 || true
+unset PW1 PW2 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Partition, format, mount
@@ -254,9 +268,12 @@ cp -f /etc/resolv.conf "${TARGET}/etc/resolv.conf"
 ROOT_UUID="$(blkid -s UUID -o value "${ROOT}")"
 [[ -n "${ROOT_UUID}" ]] || die "cannot read the new root UUID"
 
-# Password travels through a 0600 file, not argv or the environment.
-printf '%s\n' "${PASSWORD}" > "${TARGET}/root/.bunny-password"
-chmod 0600 "${TARGET}/root/.bunny-password"
+# Password travels through a 0600 file, not argv or the environment. The wizard
+# path has no password at install time.
+if (( ! OOBE )); then
+  printf '%s\n' "${PASSWORD}" > "${TARGET}/root/.bunny-password"
+  chmod 0600 "${TARGET}/root/.bunny-password"
+fi
 unset PASSWORD
 
 # ---------------------------------------------------------------------------
@@ -284,18 +301,72 @@ HOSTS
 # install, so only pass the groups that actually exist. One -G with a comma
 # list: repeated -G flags would keep only the last group.
 GROUP_LIST=""
-for g in wheel input video audio render storage power lp; do
+SETUP_LIST=""
+for g in wheel input video audio render storage power lp bunny; do
   if getent group "\$g" >/dev/null 2>&1; then
     GROUP_LIST="\${GROUP_LIST:+\${GROUP_LIST},}\$g"
   fi
 done
+for g in input video audio render storage power lp bunny; do
+  if getent group "\$g" >/dev/null 2>&1; then
+    SETUP_LIST="\${SETUP_LIST:+\${SETUP_LIST},}\$g"
+  fi
+done
 UG_ARGS=()
 if [[ -n "\${GROUP_LIST}" ]]; then UG_ARGS=(-G "\${GROUP_LIST}"); fi
-id -u '${USERNAME}' >/dev/null 2>&1 || \
-  useradd -m -c "Bunny OS" "\${UG_ARGS[@]}" -s /bin/bash '${USERNAME}'
-PASSWORD="\$(cat /root/.bunny-password)"
-printf '%s:%s\n' '${USERNAME}' "\${PASSWORD}" | chpasswd
-shred -u /root/.bunny-password 2>/dev/null || rm -f /root/.bunny-password
+SETUP_ARGS=()
+if [[ -n "\${SETUP_LIST}" ]]; then SETUP_ARGS=(-G "\${SETUP_LIST}"); fi
+
+# Account mode. OOBE=1 means the graphical wizard runs on first boot and
+# creates the human account. OOBE=0 means --user/BUNNY_PASSWORD pre-created it.
+if [[ "${OOBE}" == "1" ]]; then
+  # Never carry the live bunny/bunny credentials into the installed system.
+  if id -u bunny >/dev/null 2>&1; then
+    userdel bunny >/dev/null 2>&1 || true
+  fi
+  rm -rf /home/bunny
+  groupadd -f bunny 2>/dev/null || true
+
+  # The kiosk account: locked password, no wheel, a real home so SDDM can
+  # start the session. bunny-setupd reserves this name.
+  if ! id -u setup >/dev/null 2>&1; then
+    SETUP_PRIMARY=()
+    if getent group setup >/dev/null 2>&1; then
+      SETUP_PRIMARY=(-N -g users)
+    fi
+    useradd -m -c "Bunny OS Setup" "\${SETUP_ARGS[@]}" "\${SETUP_PRIMARY[@]}" -s /bin/bash setup
+  fi
+  passwd -l setup >/dev/null 2>&1 || true
+  chown -R setup: /home/setup 2>/dev/null || true
+  printf 'setup\n' > /etc/bunny/oobe-bootstrap
+  chmod 0644 /etc/bunny/oobe-bootstrap
+
+  install -d -m 0755 /var/lib/bunny
+  # The wizard writes these when it finishes. Their absence is the signal that
+  # SDDM must autologin setup into bunny-setup instead of Gaming Mode.
+  rm -f /var/lib/bunny/.oobe-done /var/lib/bunny/.account-ready \
+        /run/bunny/oobe-preview-done
+  SDDM_USER=setup
+  SDDM_SESSION=bunny-setup
+else
+  USER_PRIMARY=()
+  if getent group '${USERNAME}' >/dev/null 2>&1; then
+    USER_PRIMARY=(-N -g users)
+  fi
+  id -u '${USERNAME}' >/dev/null 2>&1 || \
+    useradd -m -c "Bunny OS" "\${UG_ARGS[@]}" "\${USER_PRIMARY[@]}" -s /bin/bash '${USERNAME}'
+  PASSWORD="\$(cat /root/.bunny-password)"
+  printf '%s:%s\n' '${USERNAME}' "\${PASSWORD}" | chpasswd
+  shred -u /root/.bunny-password 2>/dev/null || rm -f /root/.bunny-password
+  chown -R '${USERNAME}': /home/'${USERNAME}' 2>/dev/null || true
+
+  install -d -m 0755 /var/lib/bunny
+  date -u +%FT%TZ > /var/lib/bunny/.oobe-done
+  date -u +%FT%TZ > /var/lib/bunny/.account-ready
+  chmod 0644 /var/lib/bunny/.oobe-done /var/lib/bunny/.account-ready
+  SDDM_USER='${USERNAME}'
+  SDDM_SESSION=bunny-gaming
+fi
 passwd -l root >/dev/null 2>&1 || true
 
 echo '%wheel ALL=(ALL:ALL) ALL' > /etc/sudoers.d/10-wheel
@@ -307,34 +378,33 @@ rm -rf /etc/systemd/system/getty@tty2.service.d
 rm -f /etc/systemd/system/bunny-live.target
 rm -f /etc/systemd/system/multi-user.target.wants/bunny-live.target
 
-# SDDM: autologin the chosen user into the Gaming session. The static
-# 10-bunny.conf (Wayland, theme, power commands) ships with the image and is
-# left untouched; bunny-sessiond owns the autologin drop-in from here on.
+# SDDM: autologin either the wizard bootstrap or the pre-created user. The
+# static 10-bunny.conf ships with the image; bunny-sessiond owns this drop-in
+# from the first boot and keeps it pinned to bunny-setup until the wizard
+# writes /var/lib/bunny/.oobe-done.
 mkdir -p /etc/sddm.conf.d
 cat > /etc/sddm.conf.d/20-bunny-session.conf <<SDDM
 # Generated by bunny-install. bunny-sessiond rewrites this on mode changes.
 [Autologin]
-User=${USERNAME}
-Session=bunny-gaming
+User=\${SDDM_USER}
+Session=\${SDDM_SESSION}
 Relogin=false
 SDDM
 
-# The daemon derives the SDDM user from session.conf; keep it in sync with the
-# account that was just created.
+# The daemon derives the SDDM user from session.conf; the wizard updates it
+# again when it creates the real account.
 if [[ -f /etc/bunny/session.conf ]]; then
-  sed -i "s/^BUNNY_USER=.*/BUNNY_USER=${USERNAME}/" /etc/bunny/session.conf
+  sed -i "s/^BUNNY_USER=.*/BUNNY_USER=\${SDDM_USER}/" /etc/bunny/session.conf
 fi
 
 systemctl enable sddm.service
 systemctl set-default graphical.target
 systemctl enable bunny-sessiond.service
 systemctl enable bunny-firstboot.service
-# The account exists, so the interactive provisioner must stay dormant. The
-# marker is what stops bunny-setup from holding tty1 on every boot.
-install -d -m 0755 /var/lib/bunny
-date -u +%FT%TZ > /var/lib/bunny/.account-ready
-chmod 0644 /var/lib/bunny/.account-ready
-systemctl enable bunny-setup.service
+# The graphical wizard owns first boot. The text provisioner stays available
+# from the recovery menu but is never enabled automatically.
+systemctl enable bunny-setupd.service 2>/dev/null || true
+systemctl disable bunny-setup.service 2>/dev/null || true
 systemctl enable bunny-recovery.service
 systemctl enable bunny-update.timer
 systemctl enable bunny-health.timer
@@ -395,8 +465,6 @@ ENTRY2
 else
   echo "WARNING: no kernel found in /boot; systemd-boot was not configured" >&2
 fi
-
-chown -R '${USERNAME}':'${USERNAME}' /home/'${USERNAME}'
 POSTINSTALL
 chmod 0755 "${TARGET}/root/bunny-postinstall.sh"
 
@@ -416,10 +484,11 @@ cat <<EOF
 
     root UUID   ${ROOT_UUID}
     bootloader  systemd-boot (UEFI)
-    user        ${USERNAME}
-    login       graphical, Gaming Mode by default
+    account     $( (( OOBE )) && echo "created by the first-boot wizard" || echo "${USERNAME}" )
+    login       graphical, $( (( OOBE )) && echo "setup wizard" || echo "Gaming Mode" ) by default
 
   Remove the USB stick and reboot. The first boot runs bunny-firstboot
   (Flatpak setup, zram, sysctl tuning) and can take a few minutes.
+  $( (( OOBE )) && echo "The wizard then asks for Wi-Fi, the time zone and your account." || echo "" )
 
 EOF

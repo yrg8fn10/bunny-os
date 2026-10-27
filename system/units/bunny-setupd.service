@@ -1,0 +1,43 @@
+[Unit]
+Description=Bunny OS First-Boot Setup Service
+Documentation=file:///usr/share/doc/bunny-os/INSTALL.md
+# The wizard owns the loopback API and serves its own UI. It must be listening
+# before SDDM autologins the bootstrap account into bunny-setup.
+After=NetworkManager.service local-fs.target dbus.service
+Wants=NetworkManager.service
+Before=display-manager.service
+
+[Service]
+Type=simple
+# ExecCondition --check returns 0 only while setup is pending: no marker, or a
+# live image booted with bunny.oobe=1 that has not finished a preview run.
+# A completed system skips the unit without failing it.
+ExecCondition=/usr/local/bin/bunny-setupd --check
+ExecStart=/usr/local/bin/bunny-setupd --port 8430 --ui /opt/bunny/panel/ui
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+RuntimeDirectory=bunny
+RuntimeDirectoryMode=0750
+StateDirectory=bunny
+StateDirectoryMode=0755
+
+# root is required: creating the desktop account, chpasswd, timedatectl and
+# rewriting the SDDM drop-in all need it. The listener is loopback-only and
+# every write requires the per-boot token baked into the served index.html.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=no
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/etc /home /var/lib/bunny /var/log/bunny /run/bunny
+
+[Install]
+WantedBy=graphical.target

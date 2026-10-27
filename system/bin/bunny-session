@@ -8,6 +8,7 @@
 #
 #    bunny-session gaming    gamescope (or cage) + Control Panel, Plasma on failure
 #    bunny-session desktop   Plasma Wayland
+#    bunny-session setup     first-boot wizard kiosk (cage), Plasma on failure
 #
 #  Failure policy — this is the important part. A Wayland session that exits
 #  hands control back to SDDM, which repaints the greeter: that is the
@@ -202,7 +203,55 @@ start_cage() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+#  First-boot setup session
+# ---------------------------------------------------------------------------
+# SDDM autologins the bootstrap account into this session while
+# /var/lib/bunny/.oobe-done is missing (or a live image was booted with
+# bunny.oobe=1).  The wizard is a fullscreen browser, so the smallest reliable
+# compositor wins: cage, then gamescope, then Plasma with the wizard on top.
+# Like gaming, this must never bounce back to the greeter unattended.
+start_setup() {
+  local rc=0
+  [[ -x "${PANEL}" ]] || { log "control panel missing at ${PANEL}"; return 1; }
+
+  if command -v cage >/dev/null 2>&1; then
+    log "starting first-boot wizard under cage"
+    cage -- "${PANEL}" --setup --kiosk || rc=$?
+    if (( rc == 0 )); then return 0; fi
+    log "cage exited with status ${rc}"
+  fi
+
+  if command -v gamescope >/dev/null 2>&1 && compgen -G "/dev/dri/card*" >/dev/null; then
+    log "starting first-boot wizard under gamescope"
+    rc=0
+    gamescope -W 1280 -H 800 -r 60 -- "${PANEL}" --setup --kiosk || rc=$?
+    if (( rc == 0 )); then return 0; fi
+    log "gamescope exited with status ${rc}"
+  fi
+
+  if command -v startplasma-wayland >/dev/null 2>&1; then
+    log "no kiosk compositor; showing the wizard on the Plasma desktop"
+    ( sleep 4; "${PANEL}" --setup --kiosk ) >/dev/null 2>&1 &
+    exec startplasma-wayland
+  fi
+
+  log "no compositor can host the setup wizard"
+  return 1
+}
+
 case "${MODE}" in
+  setup)
+    # The kiosk has no window decorations and no shell, so it cannot be
+    # dismissed. If every compositor fails, fall back to the desktop so the
+    # user is not stranded on a black screen.
+    start_setup || {
+      log "setup session failed - falling back to the desktop"
+      start_desktop
+    }
+    exit 0
+    ;;
+
   gaming)
     export MANGOHUD=0
     export vkbasalt_enabled="${vkbasalt_enabled:-0}"
@@ -221,6 +270,6 @@ case "${MODE}" in
     ;;
 
   *)
-    die "unknown session mode '${MODE}' (expected gaming|desktop)"
+    die "unknown session mode '${MODE}' (expected gaming|desktop|setup)"
     ;;
 esac

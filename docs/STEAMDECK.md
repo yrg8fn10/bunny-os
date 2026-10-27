@@ -198,8 +198,9 @@ console menu owns `tty1`.
 | 1 | Clean install | Erases the selected internal disk and installs Bunny OS (same path as `bunny-install`) |
 | 2 | Repair | Checks GPT, ESP, Btrfs root, kernel/initramfs, `loader.conf`, loader entries and every fstab UUID; can rebuild the initramfs and reinstall systemd-boot |
 | 3 | Migration | Installs to a **different** disk and copies the old `/home` (`@home` subvolume) across; the source disk is mounted read-only |
-| 4 | Shell | Root shell on the live image |
-| 5 | System information | `lsblk`, memory, live medium |
+| 4 | Account fallback | Creates a desktop account on a machine whose graphical wizard cannot start |
+| 5 | Shell | Root shell on the live image |
+| 6 | System information | `lsblk`, memory, live medium |
 
 Select it in systemd-boot, or press `x` on the syslinux menu for BIOS machines.
 Install and migration need the live USB; repair and the shell also work from an
@@ -211,10 +212,16 @@ installed system, so the menu is reachable later without the stick.
 
 ### Accounts and offline boot
 
-* `bunny-setup.service` runs before the display manager. If the image ever boots
-  with no human account it prompts on `tty1` for a username and password, then
-  repoints SDDM at it. It writes `/var/lib/bunny/.account-ready` and never runs
-  again; without a terminal it logs and exits instead of hanging.
+* `bunny-setupd.service` runs before the display manager while
+  `/var/lib/bunny/.oobe-done` is missing. It serves the graphical first-boot
+  wizard on loopback port 8430, and SDDM autologins the locked `setup` account
+  into `bunny-setup` (cage + Chromium kiosk). The wizard creates the desktop
+  account, joins Wi-Fi and sets the time zone, then writes `.oobe-done` and
+  hands the display to Gaming Mode.
+* `bunny-account-setup` is the headless fallback. It is not enabled at boot any
+  more; the recovery menu (`4) Account fallback`) runs it when the display
+  manager or the kiosk compositor cannot start. It writes both `.oobe-done` and
+  `/var/lib/bunny/.account-ready`, so the wizard never runs behind its back.
 * `bunny-firstboot.service` is ordered `After=network.target`, not
   `network-online.target`, and every network step is time-boxed (`nm-online`
   for 20 s, `flatpak` for 180 s per app). A Deck booted with no Wi-Fi still

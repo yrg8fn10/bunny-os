@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>setup smoke</title>
+<style>
+  body { font: 13px/1.5 monospace; background: #16111c; color: #f5eef8; padding: 24px; }
+  .pass { color: #8ef0c6; } .fail { color: #ff8fa3; } h1 { font-size: 15px; }
+  #wiz { position: fixed; left: -3000px; top: 0; width: 1280px; height: 800px; border: 0; }
+</style>
+</head>
+<body>
+<h1>Bunny OS first-boot wizard smoke test</h1>
+<pre id="out">running…</pre>
+<iframe id="wiz" title="wizard" src="../control-panel/ui/setup/index.html?mock=1"></iframe>
+<script type="module">
+/* End-to-end checks for the graphical first-boot wizard.
+ *
+ * The iframe is the real index.html + setup.js in `?mock=1` mode, so this
+ * exercises the same DOM, focus navigation and step machine the Deck runs,
+ * without a display manager or a root service.
+ *
+ *   python -m http.server 8900 --directory .
+ *   msedge --headless=new --dump-dom http://127.0.0.1:8900/tools/setup-smoke.html
+ *
+ * The iframe is kept off-screen but laid out, so getBoundingClientRect() and
+ * the geometric D-pad navigation see real geometry.
+ */
+
+const out = document.getElementById('out');
+const lines = [];
+let passed = 0;
+let failed = 0;
+const check = (ok, label, detail = '') => {
+  if (ok) passed += 1; else failed += 1;
+  lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? `  (${detail})` : ''}`);
+};
+const report = () => {
+  out.className = failed ? 'fail' : 'pass';
+  out.textContent = `${failed ? 'FAIL' : 'PASS'} ${passed}/${passed + failed}\n\n${lines.join('\n')}`;
+  document.title = `${failed ? 'FAIL' : 'PASS'} ${passed}/${passed + failed}`;
+};
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function waitFor(fn, label, timeout = 12000) {
+  const start = Date.now();
+  for (;;) {
+    let value;
+    try { value = await fn(); } catch { value = null; }
+    if (value) return value;
+    if (Date.now() - start > timeout) throw new Error(`timed out waiting for ${label}`);
+    await wait(50);
+  }
+}
+
+const frame = document.getElementById('wiz');
+try {
+  // A freshly created iframe already has a complete about:blank document, so a
+  // readyState check is not enough: wait until the wizard URL is the one that
+  // loaded, then re-read contentDocument (the first one is stale).
+  await new Promise((resolve) => {
+    const done = () => frame.contentDocument?.URL?.includes('setup/index.html');
+    if (done()) return resolve();
+    frame.addEventListener('load', () => (done() ? resolve() : null), { once: true });
+    setTimeout(resolve, 8000);
+  });
+
+  const doc = () => frame.contentDocument;
+  const api = await waitFor(() => frame.contentWindow.__BUNNY_SETUP__, 'wizard module');
+  const win = frame.contentWindow;
+  const $ = (id) => doc().getElementById(id);
+  const step = () => $('step')?.dataset.step;
+  const focused = () => doc().querySelector('#setup .is-focused');
+
+  const key = (k) => doc().dispatchEvent(
+    new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+
+  // --- 1. boots ------------------------------------------------------------
+  check(api.mock === true, 'wizard starts against the deterministic mock backend');
+  await waitFor(() => step() === 'welcome', 'welcome step');
+  check(step() === 'welcome', 'first screen is Welcome', String(step()));
+  check(api.state.steps.map((s) => s.id).join() === 'welcome,network,timezone,account,done',
+    'step order is welcome → network → time → account → ready',
+    api.state.steps.map((s) => s.id).join());
+
+  // --- 2. identity is baked in, never a stale literal ----------------------
+  check($('build-label').textContent.trim() === 'v0.2.0',
+    'header shows the baked version', $('build-label').textContent.trim());
+  check($('target-label').textContent.trim() === 'Steam Deck LCD',
+    'header names the target device', $('target-label').textContent.trim());
+  check(!doc().body.innerHTML.includes('0.1.0'), 'rendered page has no stale 0.1.0 literal');
+  check(win.getComputedStyle($('wifi-dialog')).display === 'none',
+    'Wi-Fi dialog is not painted before it opens',
+    win.getComputedStyle($('wifi-dialog')).display);
+  check(win.getComputedStyle($('keyboard')).display === 'none',
+    'on-screen keyboard is not painted before it opens',
+    win.getComputedStyle($('keyboard')).display);
+
+  // --- 3. controller owns the screen from the first frame ------------------
+  const first = await waitFor(() => focused(), 'initial focus');
+  check(first === $('next'), 'focus starts on the primary action, not nowhere',
+    first?.id || first?.textContent?.trim()?.slice(0, 20));
+  check(first?.classList.contains('btn--primary'), 'the focused control is the primary button');
+
+  // Enter on the focused button must advance: that is what the A button sends.
+  const footerReachable = first === $('next');
+  key('Enter');
+  const movedToNetwork = await waitFor(() => step() === 'network', 'network step');
+  check(footerReachable && movedToNetwork, 'A/Enter on the footer button advances the wizard');
+
+  // --- 4. Wi-Fi list -------------------------------------------------------
+  await waitFor(() => doc().querySelectorAll('.net').length >= 4, 'network cards');
+  const cards = [...doc().querySelectorAll('.net')];
+  check(cards.length >= 4, 'networks are listed as cards', String(cards.length));
+  check(cards.every((c) => c.hasAttribute('data-focusable')),
+    'every network card is reachable with the D-pad');
+  check(cards.some((c) => c.textContent.includes('Bunny Hutch')), 'mock SSIDs rendered');
+  check(!cards.every((c) => c.hasAttribute('disabled')), 'cards are not disabled');
+
+  // D-pad from the Scan button must reach the other controls in the frame.
+  const scan = doc().querySelector('[data-action="scan"]');
+  scan.focus();
+  key('ArrowDown');
+  await wait(80);
+  const afterDown = focused();
+  check(Boolean(afterDown) && afterDown !== scan && afterDown.closest('#setup'),
+    'D-pad moves focus off Scan into the step', afterDown?.className || 'none');
+  check(afterDown === $('next') || afterDown?.classList.contains('btn'),
+    'focus stays on a real control after moving', afterDown?.textContent?.trim()?.slice(0, 20));
+
+  // --- 5. secured network opens the dialog + on-screen keyboard -----------
+  cards.find((c) => c.textContent.includes('Bunny Hutch')).click();
+  await waitFor(() => !$('wifi-dialog').hidden, 'Wi-Fi dialog');
+  check(!$('wifi-dialog').hidden, 'tapping a secured network opens the join dialog');
+  check(win.getComputedStyle($('wifi-dialog')).display !== 'none',
+    'the open dialog is actually painted');
+  check(!$('keyboard').hidden, 'the password field raises the on-screen keyboard');
+  const keys = doc().querySelectorAll('#keyboard-rows [data-key]').length;
+  check(keys >= 26, 'on-screen keyboard has a full letter row', String(keys));
+  check(api.state.keyboard.target === $('wifi-password'),
+    'keyboard types into the password field');
+  check(doc().querySelectorAll('#keyboard-rows [data-key]').length > 0
+    && [...doc().querySelectorAll('#keyboard-rows [data-key]')].some((k) => k.dataset.key === 'a'),
+    'keyboard sends literal characters');
+
+  // type a character, then B/Escape backs out of the keyboard only
+  doc().querySelector('#keyboard-rows [data-key="a"]').click();
+  check($('wifi-password').value === 'a', 'tapping a key appends to the field',
+    $('wifi-password').value);
+  key('Escape');
+  await wait(60);
+  check($('keyboard').hidden && !$('wifi-dialog').hidden,
+    'B/Escape closes the keyboard before the dialog');
+
+  // --- 6. join -------------------------------------------------------------
+  $('wifi-password').value = 'carrotcake';
+  $('wifi-join').click();
+  await waitFor(() => api.state.network.status?.connected, 'Wi-Fi connect');
+  check(api.state.network.status.ssid === 'Bunny Hutch', 'connect records the chosen SSID',
+    api.state.network.status.ssid);
+  // The status flips before the dialog closes and the step re-renders, so wait
+  // for the wizard to finish the whole connect path before asserting.
+  await waitFor(() => $('wifi-dialog').hidden && api.state.busy === false, 'dialog close');
+  check($('wifi-dialog').hidden, 'dialog closes once the connection succeeds');
+  check(doc().body.textContent.includes('Bunny Hutch'), 'network step reflects the connection');
+
+  // --- 7. time zone --------------------------------------------------------
+  $('next').click();
+  await waitFor(() => step() === 'timezone', 'timezone step');
+  await waitFor(() => doc().querySelectorAll('#zone-common [data-zone]').length > 3, 'zone grid');
+  check(doc().querySelectorAll('#zone-common [data-zone]').length > 3,
+    'common time zones are rendered as buttons');
+  const clock = await waitFor(() => {
+    const value = doc().querySelector('#clock-time')?.textContent || '';
+    return value && value !== '--:--' ? value : '';
+  }, 'clock preview').catch(() => '');
+  check(/^\d{2}:\d{2}$/.test(clock), 'clock preview shows a live time', clock || '--:--');
+
+  const search = $('zone-search');
+  search.value = 'tokyo';
+  search.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await wait(60);
+  check(!$('zone-all-card').hidden, 'typing filters into the full zone list');
+  const match = doc().querySelector('#zone-all [data-zone="Asia/Tokyo"]');
+  check(Boolean(match), 'search finds Asia/Tokyo');
+  match?.click();
+  await waitFor(() => api.state.timezone.selected === 'Asia/Tokyo', 'zone selection');
+  check(api.state.timezone.selected === 'Asia/Tokyo', 'selecting a zone records it',
+    api.state.timezone.selected);
+
+  $('next').click();
+  const reachedAccount = await waitFor(() => step() === 'account', 'account step');
+  check(reachedAccount && api.state.timezone.applied === 'Asia/Tokyo',
+    'Continue applies the time zone before moving on', api.state.timezone.applied);
+
+  // --- 8. account validation ----------------------------------------------
+  await waitFor(() => $('acct-user'), 'account fields');
+  check(Boolean($('acct-pass')) && Boolean($('acct-confirm')),
+    'account step asks for a password and a confirmation');
+  $('acct-user').value = 'robin';
+  $('acct-pass').value = 'short';
+  $('acct-confirm').value = 'short';
+  $('next').click();
+  await wait(120);
+  check(!$('acct-error').hidden, 'a short password is rejected inline');
+  check(!api.state.account.created, 'nothing is created when validation fails');
+
+  $('acct-pass').value = 'carrotcake9';
+  $('acct-confirm').value = 'carrotcake9';
+  $('next').click();
+  await waitFor(() => api.state.account.created, 'account creation');
+  check(api.state.account.username === 'robin', 'account is created with the chosen name',
+    api.state.account.username);
+  check(doc().body.textContent.includes('Welcome, robin'), 'account step confirms the new owner');
+  check($('next').textContent.trim() === 'Continue', 'primary action becomes Continue',
+    $('next').textContent.trim());
+  check($('acct-error') === null || $('acct-error').hidden, 'no error is left on screen');
+
+  // --- 9. ready screen and finish -----------------------------------------
+  $('next').click();
+  await waitFor(() => step() === 'done', 'ready step');
+  const done = $('done-list')?.textContent || '';
+  check(done.includes('Bunny Hutch') && done.includes('robin') && done.includes('Asia/'),
+    'ready screen summarises network, account and clock', done.replace(/\s+/g, ' ').trim().slice(0, 80));
+  check($('next').textContent.trim() === 'Start Gaming Mode',
+    'final action starts Gaming Mode', $('next').textContent.trim());
+
+  $('next').click();
+  await waitFor(() => api.requests.includes('/api/finish'), 'finish call');
+  check(api.requests.includes('/api/finish'), 'finish posts to /api/finish');
+  await waitFor(() => $('toasts').textContent.includes('Setup complete'), 'finish');
+  check($('toasts').textContent.includes('Setup complete'),
+    'finish calls the setup service and reports success');
+  check(api.state.busy === false, 'the wizard is not left stuck in a busy state');
+  const expected = ['/api/connect', '/api/timezone', '/api/account', '/api/finish'];
+  check(expected.every((path) => api.requests.includes(path)),
+    'wizard only calls the endpoints bunny-setupd exposes',
+    expected.filter((path) => !api.requests.includes(path)).join(',') || 'all present');
+
+  // --- 10. touch layout ----------------------------------------------------
+  const rect = $('next').getBoundingClientRect();
+  check(rect.height >= 40 && rect.width >= 120,
+    'primary action is a touch-sized target',
+    `${Math.round(rect.width)}x${Math.round(rect.height)}`);
+
+  const css = await (await fetch('../control-panel/ui/setup/setup.css')).text();
+  check(css.includes('--focus'), 'styles define the focus ring');
+  check(css.includes('@media'), 'styles adapt to the Deck panel');
+  const html = await (await fetch('../control-panel/ui/setup/index.html')).text();
+  check(html.includes('__BUNNY_SETUP_TOKEN__'),
+    'template keeps the placeholder the service replaces');
+  check(!html.includes('0.1.0') && !css.includes('0.1.0'),
+    'no stale 0.1.0 literal in the shipped wizard assets');
+  check(css.includes('[hidden] { display: none !important; }'),
+    'hidden surfaces cannot be painted over the wizard');
+} catch (err) {
+  check(false, 'wizard smoke run', err && err.message ? err.message : String(err));
+}
+report();
+</script>
+</body>
+</html>

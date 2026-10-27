@@ -183,13 +183,18 @@ export function createMockBackend() {
   let hintCount = 3;
 
   const status = () => ({
-    version: '0.1.0-mock',
+    version: '0.2.0-mock',
+    channel: 'dev',
+    target: 'generic',
+    target_name: 'PC',
+    build_id: 'mock',
     mode: state.mode,
     mode_session: state.mode === 'gaming' ? 'bunny-gaming' : 'bunny-desktop',
     default_mode: settings.session.default_mode,
     live: false,
     display_manager_active: false,
-    sessions: { gaming: 'bunny-gaming', desktop: 'bunny-desktop' },
+    oobe: { pending: false, preview: false, session: '', user: '' },
+    sessions: { gaming: 'bunny-gaming', desktop: 'bunny-desktop', setup: 'bunny-setup' },
     settings: clone(settings),
     agent: { status: 'mock', local_only: true },
   });
@@ -227,7 +232,7 @@ export function createMockBackend() {
     await wait(cmd === 'library' ? 420 : 180);
     switch (cmd) {
       case 'ping':
-        return { pong: true, version: '0.1.0-mock' };
+        return { pong: true, version: '0.2.0-mock' };
       case 'status':
         return status();
       case 'get-settings':
@@ -284,7 +289,7 @@ export function createMockBackend() {
       await wait(80);
       return {
         status: 'ok',
-        version: '0.1.0-mock',
+        version: '0.2.0-mock',
         voice_backend: 'mock-synth',
         voice_available: true,
         memory: { enabled: true, entries: memoryEntries },
@@ -295,7 +300,7 @@ export function createMockBackend() {
       await wait(120);
       return {
         agent: {
-          version: '0.1.0-mock',
+          version: '0.2.0-mock',
           uptime_seconds: 812,
           voice_backend: 'mock-synth',
           voice_available: true,

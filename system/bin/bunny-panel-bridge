@@ -35,6 +35,26 @@ MAX_BODY = 64 * 1024
 DEFAULT_SOCKET = Path(os.environ.get("BUNNY_SOCKET", "/run/bunny/sessiond.sock"))
 DEFAULT_UI = Path(os.environ.get("BUNNY_PANEL_UI", "/opt/bunny/panel/ui"))
 
+
+def _build_info() -> dict:
+    for path in (Path("/etc/bunny/build-info.json"), Path("/etc/bunny/version")):
+        try:
+            if path.suffix == ".json":
+                data = json.loads(path.read_text("utf-8"))
+                if isinstance(data, dict):
+                    return data
+            else:
+                version = path.read_text("utf-8").strip()
+                if version:
+                    return {"version": version}
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
+
+
+BUILD_INFO = _build_info()
+VERSION = str(BUILD_INFO.get("version") or "").strip() or "0.2.0"
+
 ALLOWED_COMMANDS = {
     "ping", "status", "get-settings", "set-settings",
     "set-mode", "switch-mode", "launch", "library",
@@ -78,7 +98,7 @@ def daemon_call(socket_path: Path, cmd: str, args: dict, timeout: float = 30.0) 
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "bunny-panel-bridge/0.1"
+    server_version = f"bunny-panel-bridge/{VERSION}"
     sys_version = ""
     socket_path: Path = DEFAULT_SOCKET
     ui_root: Path = DEFAULT_UI
@@ -171,7 +191,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if route == "/api/health":
             self._json(200, {
                 "ok": True,
-                "bridge": "0.1",
+                "service": "bunny-panel-bridge",
+                "bridge": VERSION,
+                "version": VERSION,
+                "channel": str(BUILD_INFO.get("channel") or "dev"),
+                "target": str(BUILD_INFO.get("target") or "generic"),
+                "target_name": str(BUILD_INFO.get("target_name") or "PC"),
+                "build_id": str(BUILD_INFO.get("build_id") or ""),
                 "socket": str(self.socket_path),
                 "ui": str(self.ui_root),
             })

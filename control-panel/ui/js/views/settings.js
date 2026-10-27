@@ -10,8 +10,10 @@ export function render(root, ctx) {
   const s = (key, fallback) => setting(state, key, fallback);
   const mode = status.mode || 'gaming';
   const connection = state.connection || {};
-  const version = status.version || 'unknown';
-  const channel = s('updates.channel', 'stable');
+  const version = status.version || '0.2.0';
+  const channel = s('updates.channel', status.channel || 'stable');
+  const targetName = status.target_name || status.target || 'PC';
+  const buildId = status.build_id || 'local';
 
   root.innerHTML = `
     <div class="view__head">
@@ -99,7 +101,9 @@ export function render(root, ctx) {
       <section class="panel">
         <h2 class="panel__title">About</h2>
         <div class="card-rows">
-          ${row('Version', 'Build channel is set at image build time.', `<span class="badge">${esc(version)} · ${esc(channel)}</span>`)}
+          ${row('Version', 'Compiled into this image at build time.', `<span class="badge">${esc(version)} · ${esc(channel)}</span>`)}
+          ${row('Target', 'Hardware profile this image was built for.', `<span class="badge">${esc(targetName)}</span>`)}
+          ${row('Build', 'Image build identifier.', `<span class="badge">${esc(buildId)}</span>`)}
           ${row('Session daemon', 'Privileged broker for modes, settings and power.', `<span class="badge ${status.mode ? 'badge--on' : 'badge--off'}">${status.mode ? 'connected' : 'offline'}</span>`)}
           ${row('Panel transport', 'Native shell, loopback bridge, or offline preview.', `<span class="badge">${esc(connection.label || 'unknown')}</span>`)}
           ${row('Bun Bun agent', 'Local HTTP + SSE on 127.0.0.1:8422.', `<span class="badge ${state.bunbun?.online ? 'badge--on' : 'badge--off'}">${state.bunbun?.online ? 'online' : 'offline'}</span>`)}

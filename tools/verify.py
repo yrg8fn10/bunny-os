@@ -39,6 +39,8 @@ REQUIRED = [
     "system/bin/bunnyctl",
     "system/bin/bunny-firstboot",
     "system/bin/bunny-account-setup",
+    "system/bin/bunny-setupd",
+    "tools/setupd-smoke.py",
     "system/bin/bunny-recovery",
     "system/bin/bunny-update",
     "system/bin/bunny-health",
@@ -47,6 +49,7 @@ REQUIRED = [
     "system/units/bunny-sessiond.service",
     "system/units/bunny-firstboot.service",
     "system/units/bunny-setup.service",
+    "system/units/bunny-setupd.service",
     "system/units/bunny-recovery.service",
     "system/units/bunny-update.service",
     "system/units/bunny-update.timer",
@@ -56,6 +59,7 @@ REQUIRED = [
     "system/user-units/bunny-bunbun.service",
     "system/wayland-sessions/bunny-gaming.desktop",
     "system/wayland-sessions/bunny-desktop.desktop",
+    "system/wayland-sessions/bunny-setup.desktop",
     "bunbun/pyproject.toml",
     "bunbun/bunbun/service.py",
     "bunbun/bunbun/mam/policy.py",
@@ -70,6 +74,10 @@ REQUIRED = [
     "control-panel/ui/css/pastel.css",
     "control-panel/ui/js/companion.js",
     "control-panel/ui/js/quickmenu.js",
+    "control-panel/ui/setup/index.html",
+    "control-panel/ui/setup/setup.css",
+    "control-panel/ui/setup/setup.js",
+    "tools/setup-smoke.html",
     "control-panel/ui/assets/bunny.svg",
     "control-panel/src-tauri/Cargo.toml",
     "control-panel/src-tauri/tauri.conf.json",
@@ -79,7 +87,9 @@ REQUIRED = [
     "iso/targets/deck/target.conf",
     "iso/targets/deck/packages.x86_64",
     "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
+    "iso/overrides/efiboot/loader/entries/03-bunny-setup.conf",
     "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+    "iso/targets/deck/overlay/efiboot/loader/entries/03-bunny-setup.conf",
     "iso/targets/deck/airootfs/etc/systemd/zram-generator.conf",
     "docs/ARCHITECTURE.md",
     "docs/BUILD.md",
@@ -187,6 +197,16 @@ def check_units(rep: Report) -> None:
     # The session daemon must be root-only; Bun Bun must be a user unit.
     sessiond = (ROOT / "system/units/bunny-sessiond.service").read_text("utf-8")
     rep.add("User=" not in sessiond, "bunny-sessiond runs as root (no User= drop)")
+    setupd_unit = (ROOT / "system/units/bunny-setupd.service").read_text("utf-8")
+    rep.add("User=" not in setupd_unit, "bunny-setupd runs as root (no User= drop)")
+    rep.add("Before=display-manager.service" in setupd_unit,
+            "setup service is listening before the login manager")
+    rep.add("ExecCondition=/usr/local/bin/bunny-setupd --check" in setupd_unit,
+            "setup service skips a completed system without failing")
+    setupd = (ROOT / "system/bin/bunny-setupd").read_text("utf-8")
+    rep.add("--host" in setupd and "127.0.0.1" in setupd,
+            "setup service refuses a non-loopback bind")
+    rep.add("X-Bunny-Setup" in setupd, "setup API requires the per-boot token")
     bunbun_unit = ROOT / "system/user-units/bunny-bunbun.service"
     rep.add(bunbun_unit.is_file(), "Bun Bun ships as a user unit")
     input_unit = (ROOT / "system/units/bunny-input-agent.service").read_text("utf-8")
@@ -226,8 +246,10 @@ def check_line_endings(rep: Report) -> None:
         "iso/profiledef.sh", "iso/airootfs/etc/os-release", "iso/airootfs/etc/motd",
         "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
         "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
+        "iso/overrides/efiboot/loader/entries/03-bunny-setup.conf",
         "iso/overrides/syslinux/syslinux.cfg",
         "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+        "iso/targets/deck/overlay/efiboot/loader/entries/03-bunny-setup.conf",
         "tools/verify.py",
     }
     stray = []
@@ -365,6 +387,67 @@ def check_ui(rep: Report) -> None:
     sessiond = (ROOT / "system/lib/bunny_sessiond.py").read_text("utf-8")
     rep.add("refresh_sddm" in sessiond and "[Autologin]" in sessiond,
             "autologin drop-in is daemon-owned")
+    rep.add("oobe" in sessiond and "bunny-setup" in sessiond,
+            "session daemon pins first boot to the setup session")
+    rep.add("build-info.json" in sessiond, "session daemon reads the baked version")
+
+    # --- first-boot wizard ---------------------------------------------------
+    wizard = (ROOT / "control-panel/ui/setup/index.html").read_text("utf-8")
+    for needle, label in (
+        ('data-focusable', "wizard has controller focus markers"),
+        ("__BUNNY_SETUP_TOKEN__", "wizard receives the per-boot token"),
+        ("setup.js", "wizard module loaded"),
+    ):
+        rep.add(needle in wizard, label)
+    wizard_js = (ROOT / "control-panel/ui/setup/setup.js").read_text("utf-8")
+    for needle, label in (
+        ("X-Bunny-Setup", "wizard sends the token header"),
+        ("startGamepad", "wizard supports the controller"),
+        ("openKeyboard", "wizard has an on-screen keyboard"),
+        ("/api/finish", "wizard finishes through the setup service"),
+    ):
+        rep.add(needle in wizard_js, label)
+    rep.add("index.html" in (ROOT / "system/bin/bunny-setupd").read_text("utf-8")
+            and "Content-Security-Policy" in (ROOT / "system/bin/bunny-setupd").read_text("utf-8"),
+            "setup service serves a locked-down UI")
+    wizard_css = (ROOT / "control-panel/ui/setup/setup.css").read_text("utf-8")
+    rep.add("--focus" in wizard_css and "@media" in wizard_css,
+            "wizard styles a visible focus ring and Deck-sized layouts")
+
+    # Controller reach: the primary button lives in the footer, so navigation
+    # must scope the whole frame or a gamepad user can never advance. These two
+    # regressions were both found by tools/setup-smoke.html.
+    rep.add("nav.setScope(frame())" in wizard_js,
+            "wizard D-pad scope includes the footer button")
+    rep.add("state.account.created) go(" in wizard_js,
+            "wizard Continue advances after the account is created")
+    rep.add("addEventListener('input'" in wizard_js and "filterZones" in wizard_js,
+            "zone search survives step re-renders")
+    smoke = (ROOT / "tools/setup-smoke.html").read_text("utf-8")
+    for needle, label in (
+        ("wizard module", "setup smoke boots the real wizard module"),
+        ("is-focused", "setup smoke checks controller focus"),
+        ("/api/finish", "setup smoke completes the wizard"),
+    ):
+        rep.add(needle in smoke, label)
+
+    # Version strings have to come from the image, never from a literal that a
+    # previous release forgot to bump.
+    bridge = (ROOT / "system/bin/bunny-panel-bridge").read_text("utf-8")
+    for rel, content in (
+        ("control-panel/ui/js/app.js", app_js),
+        ("control-panel/ui/js/mock.js",
+         (ROOT / "control-panel/ui/js/mock.js").read_text("utf-8")),
+        ("control-panel/ui/setup/setup.js", wizard_js),
+        ("system/lib/bunny_sessiond.py", sessiond),
+        ("system/bin/bunny-panel-bridge", bridge),
+    ):
+        rep.add("0.1.0" not in content, f"{rel} has no stale 0.1.0 literal")
+    rep.add("build-info.json" in bridge and "target_name" in bridge,
+            "panel bridge reports the baked version and target")
+    settings_js = (ROOT / "control-panel/ui/js/views/settings.js").read_text("utf-8")
+    rep.add("target_name" in settings_js and "build_id" in settings_js,
+            "About screen shows version, target and build")
 
     # --- skin, quick access, companion ---------------------------------------
     rep.add("css/pastel.css" in html, "pastel skin stylesheet linked")
@@ -426,6 +509,8 @@ def check_build(rep: Report) -> None:
         rep.add(payload in stage, f"stages {payload}")
     rep.add("--target" in stage and "packages.x86_64" in stage,
             "staging merges target overlay and packages")
+    rep.add("/etc/bunny/version" in stage and "build-info.json" in stage,
+            "staging writes the version file the UI and daemons read")
     rep.add('[[ "${AIR}" != "/" ]]' in stage or "safe_rmrf" in stage,
             "staging cannot delete /")
 
@@ -441,7 +526,9 @@ def check_build(rep: Report) -> None:
     for conf in (
         ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
         ROOT / "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
+        ROOT / "iso/overrides/efiboot/loader/entries/03-bunny-setup.conf",
         ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/03-bunny-setup.conf",
         ROOT / "iso/overrides/syslinux/syslinux.cfg",
     ):
         for line in conf.read_text("utf-8").splitlines():
@@ -452,6 +539,18 @@ def check_build(rep: Report) -> None:
     rep.add(not stray, "boot entries reference only files archiso ships")
     rep.add("Verifying boot entry paths" in script, "build verifies boot entry paths")
 
+    # The live image boots straight to Gaming Mode, so the wizard needs an
+    # explicit preview path: bunny.oobe=1 makes bunny-setupd ignore the live
+    # .oobe-done marker. It must stay a separate entry, never the default.
+    preview = (ROOT / "iso/overrides/efiboot/loader/entries/03-bunny-setup.conf").read_text("utf-8")
+    rep.add("bunny.oobe=1" in preview, "setup preview boot entry passes bunny.oobe=1")
+    deck_preview = (ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/"
+                    "03-bunny-setup.conf").read_text("utf-8")
+    rep.add("bunny.oobe=1" in deck_preview and "amd_pstate=active" in deck_preview,
+            "Deck setup preview keeps the target kernel arguments")
+    rep.add("bunny-setup" in (ROOT / "iso/overrides/syslinux/syslinux.cfg").read_text("utf-8"),
+            "BIOS menu has a setup preview entry")
+
     # With no root= on the command line, systemd enables gpt-auto discovery and
     # creates a unit for /dev/gpt-auto-root. The archiso hook has already
     # mounted the live root by label, so that unit can never succeed; on a Steam
@@ -461,7 +560,9 @@ def check_build(rep: Report) -> None:
     for conf in (
         ROOT / "iso/overrides/efiboot/loader/entries/01-bunny-os.conf",
         ROOT / "iso/overrides/efiboot/loader/entries/02-bunny-recovery.conf",
+        ROOT / "iso/overrides/efiboot/loader/entries/03-bunny-setup.conf",
         ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
+        ROOT / "iso/targets/deck/overlay/efiboot/loader/entries/03-bunny-setup.conf",
         ROOT / "iso/overrides/syslinux/syslinux.cfg",
     ):
         for line in conf.read_text("utf-8").splitlines():
@@ -510,11 +611,26 @@ def check_recovery(rep: Report) -> None:
             "account setup exits cleanly without a terminal")
     rep.add("/etc/sddm.conf.d/20-bunny-session.conf" in acct,
             "account setup repoints SDDM at the new account")
+    rep.add(".oobe-done" in acct,
+            "account fallback also settles the wizard marker")
+    rep.add("setup|bunny-setup" in acct,
+            "account fallback never mistakes the kiosk account for a user")
     setup = text("system/units/bunny-setup.service")
     rep.add("Before=display-manager.service" in setup,
             "account setup runs before the login manager")
     rep.add("ConditionPathExists=!/var/lib/bunny/.account-ready" in setup,
             "account setup is skipped once an account exists")
+    # The text unit still exists as a manual fallback, but the image must not
+    # enable it: the graphical wizard owns first boot now.
+    boot = text("iso/airootfs/root/customize_airootfs.sh")
+    rep.add("systemctl enable bunny-setupd.service" in boot,
+            "live image enables the graphical setup service")
+    rep.add("systemctl disable bunny-setup.service" in boot,
+            "live image leaves the text account prompt disabled")
+    rep.add("useradd -m -c \"Bunny OS Setup\"" in boot and "passwd -l setup" in boot,
+            "live image creates a locked kiosk account")
+    rep.add(".oobe-done" in boot,
+            "live image boots to Gaming Mode, not the wizard")
 
     # --- recovery menu -------------------------------------------------------
     rec = text("system/bin/bunny-recovery")
@@ -559,6 +675,10 @@ def check_recovery(rep: Report) -> None:
             "installer output is mirrored to the recovery log")
     rep.add("--self-test" in rec_code and "self_test()" in rec_code,
             "recovery menu can self-test the environment")
+    rep.add("action_account" in rec_code,
+            "recovery menu exposes the account fallback")
+    rep.add("bunny-account-setup" in rec_code,
+            "recovery account fallback runs the real provisioner")
     # tty1 has no getty behind the menu (the unit conflicts it out), so a "q to
     # quit" branch would leave the console blank with no way to log in.
     rep.add("q|Q)" not in rec_code,
@@ -596,6 +716,15 @@ def check_recovery(rep: Report) -> None:
             "installer writes a recovery boot entry")
     rep.add(".account-ready" in inst,
             "installer marks the account as provisioned")
+    rep.add(".oobe-done" in inst and "userdel bunny" in inst,
+            "installer hands first boot to the wizard and drops the live login")
+    rep.add("systemctl enable bunny-setupd.service" in inst
+            and "systemctl disable bunny-setup.service" in inst,
+            "installer enables the wizard, not the text prompt")
+    rep.add("Session=bunny-setup" in inst or "SDDM_SESSION=bunny-setup" in inst,
+            "installer seeds SDDM with the setup session")
+    rep.add("created by the first-boot wizard" in inst,
+            "installer no longer asks for an account by default")
     rep.add("systemctl enable bunny-recovery.service" in inst,
             "installer enables the recovery menu for later boots")
     for tool in ("sgdisk", "genfstab", "arch-chroot", "rsync"):
@@ -649,6 +778,9 @@ def check_recovery(rep: Report) -> None:
             "gaming session never replaces itself with gamescope")
     rep.add("start_desktop" in sess and "falling back to the desktop" in sess,
             "gaming session falls back to Plasma instead of the greeter")
+    rep.add("start_setup" in sess and "--setup" in sess,
+            "setup session hosts the wizard in a kiosk compositor")
+    rep.add("cage --" in sess, "setup session prefers cage for the kiosk")
     rep.add("gaming-failures" in sess, "gaming session counts consecutive failures")
     rep.add("/dev/uinput" in sess, "gaming session handles a missing uinput device")
     rep.add("gaming_possible" in sess, "gaming session checks DRM/panel before starting")
@@ -712,6 +844,10 @@ def check_release(rep: Report) -> None:
             "CI runs the recovery picker smoke test")
     rep.add("tools/installer-smoke.sh" in workflow,
             "CI parses the installer's generated post-install script")
+    rep.add("tools/setupd-smoke.py" in workflow,
+            "CI exercises the first-boot setup service")
+    rep.add("tools/setupd-smoke.py" in (ROOT / "scripts/ship-release.sh").read_text("utf-8"),
+            "release script runs the setup service smoke test")
     rep.add("if: startsWith(github.ref, 'refs/tags/v')" in workflow,
             "release job runs only for version tags")
     rep.add("contents: write" in workflow, "release job may write releases")

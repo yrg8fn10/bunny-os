@@ -90,6 +90,9 @@ ok "bash -n"
 "${PYTHON}" -m compileall -q bunbun/bunbun system/lib tools || die "python compile failed"
 ok "python compile"
 
+"${PYTHON}" tools/setupd-smoke.py || die "first-boot setup service smoke test failed"
+ok "bunny-setupd smoke test"
+
 # The panel has no bundler and no node_modules; a smoke test driven by a
 # headless browser is the only executable check it gets. Skip it when no
 # browser is installed rather than failing a legitimate release machine.

@@ -301,9 +301,9 @@ cat > "${OUT_DIR}/build-manifest.json" <<JSON
   },
   "contents": {
     "packages": ${PKG_COUNT},
-    "agent": "Bun Bun MAM 0.1",
-    "control_panel": "bunny-panel 0.1",
-    "session_modes": ["gaming", "desktop"]
+    "agent": "Bun Bun MAM ${VERSION}",
+    "control_panel": "bunny-panel ${VERSION}",
+    "session_modes": ["gaming", "desktop", "setup"]
   },
   "build_seconds": ${BUILD_SECS}
 }

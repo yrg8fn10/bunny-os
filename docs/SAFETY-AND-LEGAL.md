@@ -258,7 +258,7 @@ authentication. Do not add them to a fork and call it Bunny OS.
 
 `bunny-install` is destructive **by design**:
 
-* It erases an entire disk. There is no dual-boot wizard in v0.1.
+* It erases an entire disk. There is no dual-boot wizard in this version.
 * It requires typing `ERASE` and refuses to target the running live media.
 * It is UEFI-only. BIOS installs are refused, not degraded.
 * It does **not** encrypt the disk. LUKS is a known gap; do not treat an
