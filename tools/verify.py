@@ -31,6 +31,7 @@ REQUIRED = [
     "iso/airootfs/etc/sddm.conf.d/10-bunny.conf",
     "iso/airootfs/etc/sddm.conf.d/20-bunny-session.conf",
     "system/bin/bunny-session",
+    "system/bin/bunny-desktop-greeting",
     "system/bin/bunny-panel",
     "system/bin/bunny-panel-bridge",
     "system/bin/bunnyctl",
@@ -89,6 +90,7 @@ TEXT_SUFFIXES = {".sh", ".py", ".js", ".css", ".html", ".json", ".md",
 SKIP_DIRS = {"build", "out", "node_modules", "target", ".git", "__pycache__", "vendor"}
 EXTRA_TEXT_NAMES = {"bunnyctl", "bunny-session", "bunny-panel", "bunny-panel-bridge",
                     "bunny-firstboot", "bunny-account-setup", "bunny-recovery",
+                    "bunny-desktop-greeting",
                     "bunny-update", "bunny-health", "bunny-launcher",
                     "bunny-platform-scan", "bunny-install", "bunny-cli", "Makefile",
                     "VERSION", ".gitignore", ".editorconfig"}
@@ -529,6 +531,37 @@ def check_recovery(rep: Report) -> None:
         t = text(rel)
         rep.add("wait-online" in t, f"{rel.split('/')[-1]} masks wait-online units")
         rep.add(".account-ready" in t, f"{rel.split('/')[-1]} writes the account marker")
+
+    # --- session handoff -----------------------------------------------------
+    # A Wayland session that exits returns the user to the greeter. That is the
+    # login loop, so the gaming session must always end up somewhere usable.
+    sess = text("system/bin/bunny-session")
+    rep.add("exec gamescope" not in sess,
+            "gaming session never replaces itself with gamescope")
+    rep.add("start_desktop" in sess and "falling back to the desktop" in sess,
+            "gaming session falls back to Plasma instead of the greeter")
+    rep.add("gaming-failures" in sess, "gaming session counts consecutive failures")
+    rep.add("/dev/uinput" in sess, "gaming session handles a missing uinput device")
+    rep.add("gaming_possible" in sess, "gaming session checks DRM/panel before starting")
+    rep.add("desktop" in sess and "startplasma-wayland" in sess,
+            "desktop session starts Plasma Wayland")
+
+    modal = ROOT / "iso/airootfs/etc/modules-load.d/bunny-gamescope.conf"
+    rep.add(modal.is_file() and "uinput" in modal.read_text("utf-8"),
+            "image loads uinput at boot for the cursor grab")
+
+    # --- desktop-mode voice greeting ----------------------------------------
+    greet = text("system/bin/bunny-desktop-greeting")
+    rep.add("espeak-ng" in greet and "piper" in greet,
+            "desktop greeting has a local TTS engine")
+    rep.add("STAMP" in greet, "desktop greeting is once per boot")
+    rep.add("play_greeting" in sess, "session triggers the desktop greeting")
+    persona = text("bunbun/bunbun/data/persona.json")
+    rep.add("desktop_greeting" in persona,
+            "Bun Bun persona carries desktop greeting lines")
+    pkgs2 = [l.strip() for l in text("iso/packages.x86_64").splitlines()
+             if l.strip() and not l.strip().startswith("#")]
+    rep.add("espeak-ng" in pkgs2, "image ships espeak-ng")
 
 
 def main(argv: list[str] | None = None) -> int:

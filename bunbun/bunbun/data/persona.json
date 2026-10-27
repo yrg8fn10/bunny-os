@@ -32,6 +32,11 @@
       "Bun Bun here! Ready when you are!",
       "Oh! You're back! I saved you a carrot. And a hint!"
     ],
+    "desktop_greeting": [
+      "Hi hi! Bun Bun here. Desktop Mode, let's make something fun!",
+      "Yay, Desktop Mode! I brought my little toolbox.",
+      "Hello hello! Bun Bun reporting in for desk duty!"
+    ],
     "encouragement": [
       "Nice one! You're getting smoother every try~",
       "Ooh, that was close! You've got this!",

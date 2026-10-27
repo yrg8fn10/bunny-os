@@ -3,15 +3,29 @@
 #  bunny-session — the graphical session entry point.
 #
 #  SDDM starts this as the Wayland session (see
-#  /usr/share/wayland-sessions/bunny-gaming.desktop).  It is the bridge between
-#  "display manager logged in" and "the player sees the Control Panel".
+#  /usr/share/wayland-sessions/bunny-*.desktop). It is the bridge between
+#  "display manager logged in" and "the player sees something usable".
 #
-#    bunny-session gaming    gamescope (or cage fallback) + Control Panel
+#    bunny-session gaming    gamescope (or cage) + Control Panel, Plasma on failure
 #    bunny-session desktop   Plasma Wayland
 #
-#  Everything is logged to the journal, so `journalctl -b -u sddm` shows it.
+#  Failure policy — this is the important part. A Wayland session that exits
+#  hands control back to SDDM, which repaints the greeter: that is the
+#  "logged in, bounced straight back to the login screen" loop. A session must
+#  therefore never exit while the machine is still usable. Every compositor
+#  attempt is supervised, and the last resort is always Plasma:
+#
+#      gamescope -> gamescope (minimal args) -> cage -> Plasma
+#
+#  Two consecutive gaming failures also disable the gaming path for later
+#  logins (a counter in ~/.local/state/bunny), so a broken compositor cannot
+#  produce an endless loop. Delete that file, or run
+#  `bunnyctl mode gaming`, to try again after a fix.
+#
+#  Everything is logged to the journal and to
+#  ~/.local/state/bunny/session.log so the next failure is diagnosable.
 # =============================================================================
-set -Eeuo pipefail
+set -uo pipefail
 
 CONF="/etc/bunny/session.conf"
 MODE="${1:-gaming}"
@@ -26,7 +40,18 @@ TARGET_CONF="/etc/bunny/target.conf"
 # shellcheck disable=SC1090
 [[ -r "${TARGET_CONF}" ]] && source "${TARGET_CONF}"
 
-log() { printf 'bunny-session: %s\n' "$*" >&2; }
+STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny"
+FAIL_FILE="${STATE_DIR}/gaming-failures"
+LOG_FILE="${STATE_DIR}/session.log"
+mkdir -p "${STATE_DIR}" 2>/dev/null || true
+
+log() {
+  local msg
+  msg="$(date -u +%FT%TZ) [bunny-session] $*"
+  printf '%s\n' "${msg}" >&2
+  printf '%s\n' "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
+}
+
 die() { log "ERROR: $*"; exit 1; }
 
 log "target=${BUNNY_TARGET_ID:-generic} mode=${MODE} wayland=${WAYLAND_DISPLAY:-unset}"
@@ -40,55 +65,149 @@ export MOZ_ENABLE_WAYLAND=1
 export STEAM_VIDEO_FLAG=1
 export BUNNY_SESSION_MODE="${MODE}"
 
+# A greeting is only wanted when the user lands on the desktop, not on every
+# internal fallback. play_greeting is idempotent per boot via the stamp file.
+play_greeting() {
+  local helper=/usr/local/bin/bunny-desktop-greeting
+  [[ -x "${helper}" ]] || return 0
+  ( sleep 4; "${helper}" ) >/dev/null 2>&1 &
+}
+
+start_desktop() {
+  log "starting the Plasma desktop session"
+  if command -v startplasma-wayland >/dev/null 2>&1; then
+    play_greeting
+    exec startplasma-wayland
+  fi
+  if command -v startplasma-x11 >/dev/null 2>&1; then
+    export XDG_SESSION_TYPE=x11
+    log "Wayland unavailable; starting Plasma on X11"
+    play_greeting
+    exec startplasma-x11
+  fi
+  die "no Plasma session found (plasma-meta missing)"
+}
+
+# ---------------------------------------------------------------------------
+#  Gaming session
+# ---------------------------------------------------------------------------
+PANEL="${BUNNY_PANEL_BIN:-/usr/local/bin/bunny-panel}"
+
+gaming_failures() {
+  local n=0
+  [[ -r "${FAIL_FILE}" ]] && n="$(cat "${FAIL_FILE}" 2>/dev/null || echo 0)"
+  [[ "${n}" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "${n}"
+}
+
+record_gaming_failure() {
+  local n
+  n="$(gaming_failures)"
+  printf '%s\n' "$((n + 1))" > "${FAIL_FILE}" 2>/dev/null || true
+  log "gaming session failure #$((n + 1)) recorded in ${FAIL_FILE}"
+}
+
+clear_gaming_failures() {
+  rm -f "${FAIL_FILE}" 2>/dev/null || true
+}
+
+# gamescope cannot run without a DRM device and (for the cursor grab) uinput.
+# Checking first turns an opaque crash into a logged reason.
+gaming_possible() {
+  if ! compgen -G "/dev/dri/card*" >/dev/null; then
+    log "no /dev/dri/card* device - gamescope cannot take DRM master"
+    return 1
+  fi
+  if [[ ! -x "${PANEL}" ]]; then
+    log "control panel missing at ${PANEL}"
+    return 1
+  fi
+  if [[ -e /etc/bunny/force-desktop ]]; then
+    log "/etc/bunny/force-desktop exists - staying on the desktop"
+    return 1
+  fi
+  return 0
+}
+
+run_gamescope() {
+  local -a args=("$@")
+  local rc=0
+  log "starting gamescope ${args[*]} -- ${PANEL} --kiosk"
+  gamescope "${args[@]}" -- "${PANEL}" --kiosk || rc=$?
+  log "gamescope exited with status ${rc}"
+  return "${rc}"
+}
+
+start_gaming() {
+  local failures started elapsed rc
+  failures="$(gaming_failures)"
+  if (( failures >= 2 )); then
+    log "gaming session failed ${failures} times already; using the desktop"
+    log "delete ${FAIL_FILE} or run 'bunnyctl mode gaming' to retry"
+    return 1
+  fi
+  gaming_possible || return 1
+  command -v gamescope >/dev/null 2>&1 || { log "gamescope not installed"; return 1; }
+
+  # shellcheck disable=SC2086
+  read -r -a GS_ARGS <<< "${BUNNY_GAMESCOPE_ARGS:--W 1920 -H 1080 -r 60}"
+
+  # --force-grab-cursor needs /dev/uinput; without it gamescope aborts.
+  if [[ ! -e /dev/uinput ]]; then
+    local -a filtered=()
+    local arg
+    for arg in "${GS_ARGS[@]}"; do
+      [[ "${arg}" == "--force-grab-cursor" ]] || filtered+=("${arg}")
+    done
+    GS_ARGS=("${filtered[@]}")
+    log "/dev/uinput missing - dropped --force-grab-cursor"
+  fi
+
+  started=$SECONDS
+  run_gamescope "${GS_ARGS[@]}"
+  rc=$?
+  elapsed=$((SECONDS - started))
+  if (( rc == 0 )); then
+    clear_gaming_failures
+    return 0
+  fi
+  (( elapsed >= 20 )) && clear_gaming_failures
+
+  # Second attempt with the minimum gamescope needs: a bad optional flag
+  # (adaptive sync, HDR, a backend override) should not cost the whole session.
+  log "retrying gamescope with minimal arguments"
+  if run_gamescope -W 1280 -H 800; then
+    clear_gaming_failures
+    return 0
+  fi
+  record_gaming_failure
+  return 1
+}
+
+start_cage() {
+  command -v cage >/dev/null 2>&1 || return 1
+  [[ -x "${PANEL}" ]] || return 1
+  log "trying cage kiosk"
+  cage -- "${PANEL}" --kiosk || true
+  return 1
+}
+
 case "${MODE}" in
   gaming)
-    # Performance posture for the gaming session.  The user's tweaks override
-    # these through bunny-sessiond; these are just sane defaults.
     export MANGOHUD=0
     export vkbasalt_enabled="${vkbasalt_enabled:-0}"
     export PROTON_ENABLE_NVAPI=1
     export DXVK_ASYNC="${DXVK_ASYNC:-1}"
 
-    PANEL="${BUNNY_PANEL_BIN:-/usr/local/bin/bunny-panel}"
-    [[ -x "${PANEL}" ]] || die "control panel missing at ${PANEL}"
-
-    if [[ "${BUNNY_USE_GAMESCOPE:-1}" == "1" ]] && command -v gamescope >/dev/null 2>&1; then
-      # shellcheck disable=SC2086
-      read -r -a GS_ARGS <<< "${BUNNY_GAMESCOPE_ARGS:--W 1920 -H 1080 -r 60}"
-      log "starting gamescope ${GS_ARGS[*]}"
-      # Not exec: if gamescope or the panel dies immediately (missing asset,
-      # no DRM master) SDDM would drop the user back to the greeter with no
-      # way forward. Fall back to Plasma instead of a dead end.
-      if gamescope "${GS_ARGS[@]}" -- "${PANEL}" --kiosk; then
-        exit 0
-      fi
-      log "gamescope exited non-zero; falling back to the desktop session"
-      if command -v startplasma-wayland >/dev/null 2>&1; then
-        exec startplasma-wayland
-      fi
-      die "gaming session failed and Plasma is unavailable"
-    elif command -v cage >/dev/null 2>&1; then
-      log "gamescope unavailable; falling back to cage kiosk"
-      if cage -- "${PANEL}" --kiosk; then
-        exit 0
-      fi
-      log "cage exited non-zero; falling back to the desktop session"
-      exec startplasma-wayland
-    else
-      log "no gamescope and no cage; starting the panel bare (dev mode)"
-      exec "${PANEL}" --kiosk
-    fi
+    start_gaming && exit 0
+    start_cage || log "cage unavailable or failed"
+    # Never return to the greeter: land the user on a working desktop.
+    log "gaming session unavailable - falling back to the desktop"
+    start_desktop
     ;;
 
   desktop)
-    if command -v startplasma-wayland >/dev/null 2>&1; then
-      exec startplasma-wayland
-    elif command -v startplasma-x11 >/dev/null 2>&1; then
-      export XDG_SESSION_TYPE=x11
-      exec startplasma-x11
-    else
-      die "KDE Plasma is not installed (plasma-meta)"
-    fi
+    start_desktop
     ;;
 
   *)

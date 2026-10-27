@@ -83,6 +83,8 @@ pipewire
 pipewire-pulse
 pipewire-alsa
 wireplumber
+# Offline TTS for Bun Bun's voice lines; no network, no voice-model download.
+espeak-ng
 alsa-ucm-conf
 sof-firmware
 qpwgraph

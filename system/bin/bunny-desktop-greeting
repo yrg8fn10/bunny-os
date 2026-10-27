@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-desktop-greeting — Bun Bun says hello when you drop into Desktop Mode.
+#
+#  Called by bunny-session after Plasma starts (never before: the greeting must
+#  not delay the session). Design rules:
+#
+#    * Silent no-op when TTS or the sound server is missing - a greeting is
+#      never worth a failed login.
+#    * One greeting per boot: a stamp file in XDG_RUNTIME_DIR stops the
+#      "switch to desktop, back to gaming, back to desktop" churn from
+#      repeating the line.
+#    * espeak-ng is the guarantee (it is in the image); a piper voice model is
+#      used instead when one was installed under /usr/share/bunbun/voices.
+#    * Lines come from the persona file so tone stays consistent with Bun Bun's
+#      written voice: bright, playful, never imitating a real child.
+# =============================================================================
+set -uo pipefail
+
+PERSONA="/opt/bunbun/bunbun/data/persona.json"
+VOICE_DIR="/usr/share/bunbun/voices"
+CONF="/etc/bunny/session.conf"
+RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
+STAMP="${RUNTIME}/bunny-desktop-greeting.stamp"
+
+# shellcheck disable=SC1090
+[[ -r "${CONF}" ]] && source "${CONF}"
+
+log() { printf 'bunny-desktop-greeting: %s\n' "$*" >&2; }
+
+[[ "${BUNNY_DESKTOP_GREETING:-1}" == "1" ]] || exit 0
+[[ -f "${STAMP}" ]] && exit 0
+: > "${STAMP}" 2>/dev/null || true
+
+LINES=(
+  "Hi hi! Bun Bun here. Desktop Mode, coming right up!"
+  "Yay, you made it! Bun Bun's ready to play."
+  "Hello hello! Desktop Mode is all yours."
+  "Bun Bun reporting in! Let's build something fun."
+)
+
+# Prefer the persona file when it is readable, so the wording stays in one place.
+if [[ -r "${PERSONA}" ]]; then
+  mapfile -t PERSONA_LINES < <(
+    python3 - "${PERSONA}" <<'PY' 2>/dev/null
+import json, sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+lines = data.get("lines", {}).get("desktop_greeting") \
+    or data.get("lines", {}).get("greeting") or []
+for line in lines:
+    if isinstance(line, str) and line.strip():
+        print(line.strip())
+PY
+  )
+  if (( ${#PERSONA_LINES[@]} > 0 )); then
+    LINES=("${PERSONA_LINES[@]}")
+  fi
+fi
+
+LINE="${LINES[RANDOM % ${#LINES[@]}]}"
+
+player=""
+for candidate in pw-play paplay aplay; do
+  if command -v "${candidate}" >/dev/null 2>&1; then player="${candidate}"; break; fi
+done
+if [[ -z "${player}" ]]; then
+  log "no audio player (pw-play/paplay/aplay); staying quiet"
+  exit 0
+fi
+
+tmpdir="$(mktemp -d "${RUNTIME}/bunbun-voice.XXXXXX" 2>/dev/null || mktemp -d)"
+trap 'rm -rf "${tmpdir}"' EXIT
+wav="${tmpdir}/hello.wav"
+
+# 1. piper (neural) when a model is installed.
+model=""
+if [[ -d "${VOICE_DIR}" ]]; then
+  model="$(find "${VOICE_DIR}" -maxdepth 1 -name '*.onnx' 2>/dev/null | head -n1 || true)"
+fi
+if [[ -n "${model}" ]] && command -v piper >/dev/null 2>&1; then
+  if printf '%s\n' "${LINE}" | piper --model "${model}" --output_file "${wav}" 2>/dev/null; then
+    :
+  else
+    rm -f "${wav}"
+  fi
+fi
+
+# 2. espeak-ng fallback: high pitch, brisk pace, youthful timbre.
+if [[ ! -s "${wav}" ]]; then
+  if ! command -v espeak-ng >/dev/null 2>&1; then
+    log "no TTS engine installed (espeak-ng or piper); staying quiet"
+    exit 0
+  fi
+  espeak-ng -v en+f3 -p 78 -s 168 -a 120 -w "${wav}" "${LINE}" 2>/dev/null || exit 0
+fi
+
+[[ -s "${wav}" ]] || exit 0
+log "speaking: ${LINE}"
+"${player}" "${wav}" >/dev/null 2>&1 || true
+exit 0
