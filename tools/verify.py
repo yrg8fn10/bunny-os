@@ -748,6 +748,17 @@ def check_recovery(rep: Report) -> None:
     rep.add("cat > /etc/hosts <<HOSTS" in inst and "127.0.1.1" in inst,
             "installer writes /etc/hosts with the hostname expanded")
 
+    # A console first-boot prompt would take tty1 before SDDM, ask for a time
+    # zone and leave a dead prompt behind when it exits. Both the live image
+    # and the installed system must never run it.
+    live = text("iso/airootfs/root/customize_airootfs.sh")
+    rep.add("systemctl mask systemd-firstboot.service" in live,
+            "live image masks the console first-boot prompt")
+    rep.add("systemctl mask systemd-firstboot.service" in inst,
+            "installed system masks the console first-boot prompt")
+    rep.add("/usr/share/zoneinfo/UTC" in live,
+            "live image pins a time zone, so nothing has to prompt for one")
+
     # Every tool the installer and the recovery menu call must be installed in
     # the image, or they die at their own preflight on the Deck.
     pkgs = [l.strip() for l in text("iso/packages.x86_64").splitlines()

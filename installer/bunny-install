@@ -425,6 +425,12 @@ systemctl mask NetworkManager-wait-online.service \
 rm -f /etc/machine-id
 systemd-machine-id-setup
 
+# The installed system boots into the wizard, never into a console first-boot
+# prompt: systemd-firstboot would grab tty1 before SDDM, ask for a time zone
+# and leave a dead prompt behind when it exits. The installer has already set
+# the time zone, locale and hostname, so the unit has nothing to ask anyway.
+systemctl mask systemd-firstboot.service 2>/dev/null || true
+
 rm -f /etc/bunny/allow-input-agent
 
 # The live image carries archiso's initramfs drop-in (the archiso/memdisk
