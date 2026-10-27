@@ -146,9 +146,12 @@ stamp_short() { date -u +"%Y%m%dT%H%M%SZ"; }
 render_tokens() {
   local root="$1"; shift
   local pair key value f
-  local -a find_args=(-type f \( -name '*.conf' -o -name '*.json' -o -name '*.desktop' \
+  # syslinux.cfg ends in .cfg, not .conf: leaving it out shipped the unrendered
+  # version token in the BIOS menu tree of every image.
+  local -a find_args=(-type f \( -name '*.conf' -o -name '*.cfg' -o -name '*.json' -o -name '*.desktop' \
     -o -name '*.service' -o -name '*.timer' -o -name '*.sh' -o -name '*.py' \
-    -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.md' \))
+    -o -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.md' \
+    -o -name 'os-release' -o -name 'motd' \))
 
   for pair in "$@"; do
     key="${pair%%=*}"

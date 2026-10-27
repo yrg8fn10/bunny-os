@@ -238,6 +238,18 @@ render_tokens "${STAGE}/profiledef.sh" \
   "BUILD_DATE=${BUILD_DATE}" \
   "CHANNEL=${CHANNEL}"
 
+# A token that survives staging means a file type render_tokens does not know
+# about (syslinux.cfg was one) would ship a literal version token in the image.
+left="$(grep -rIl -E '@(VERSION|BUILD_ID|BUILD_DATE|CHANNEL)@' "${STAGE}" \
+  --include='*.conf' --include='*.cfg' --include='*.sh' --include='*.py' \
+  --include='*.desktop' --include='*.service' --include='*.json' \
+  --include='*.html' --include='*.js' --include='*.css' --include='*.md' \
+  --include='os-release' --include='motd' \
+  2>/dev/null || true)"
+if [[ -n "${left}" ]]; then
+  die "unrendered build tokens in: ${left//$'\n'/, }"
+fi
+
 # 6. Build provenance ------------------------------------------------------
 PROVENANCE_ARGS=(
   version "${VERSION}"

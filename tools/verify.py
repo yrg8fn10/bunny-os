@@ -514,6 +514,14 @@ def check_build(rep: Report) -> None:
     rep.add('[[ "${AIR}" != "/" ]]' in stage or "safe_rmrf" in stage,
             "staging cannot delete /")
 
+    # render_tokens only rewrites the file types in its find expression. The
+    # BIOS menu is syslinux.cfg, so omitting *.cfg shipped a literal @VERSION@.
+    common = (ROOT / "scripts/lib/common.sh").read_text("utf-8")
+    rep.add("-name '*.conf'" in common and "-name '*.cfg'" in common,
+            "staging renders *.cfg boot menus (syslinux.cfg)")
+    rep.add("-name 'os-release'" in common and "-name 'motd'" in common,
+            "staging renders /etc/os-release and the motd")
+
     workflow = (ROOT / ".github/workflows/build-iso.yml").read_text("utf-8")
     rep.add("--target" in workflow, "CI can build a target profile")
     rep.add("inputs.target" in workflow, "CI exposes a target input")
