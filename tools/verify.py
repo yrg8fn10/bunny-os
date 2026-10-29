@@ -97,7 +97,15 @@ REQUIRED = [
     "docs/BUNBUN.md",
     "docs/SAFETY-AND-LEGAL.md",
     "docs/STEAMDECK.md",
+    "docs/BAZZITE.md",
+    "packaging/portable/install.sh",
+    "packaging/portable/uninstall.sh",
+    "packaging/bazzite/Containerfile",
+    "packaging/bazzite/live-iso.sh",
+    "scripts/build-portable.sh",
+    "tools/portable-smoke.sh",
     ".github/workflows/build-iso.yml",
+    ".github/workflows/build-bazzite-iso.yml",
 ]
 
 TEXT_SUFFIXES = {".sh", ".py", ".js", ".css", ".html", ".json", ".md",
@@ -250,6 +258,9 @@ def check_line_endings(rep: Report) -> None:
         "iso/overrides/syslinux/syslinux.cfg",
         "iso/targets/deck/overlay/efiboot/loader/entries/01-bunny-os.conf",
         "iso/targets/deck/overlay/efiboot/loader/entries/03-bunny-setup.conf",
+        # The portable payload renders its own copies of the docs, so its build
+        # script names the tokens it substitutes and guards against a miss.
+        "scripts/build-portable.sh",
         "tools/verify.py",
     }
     stray = []
@@ -888,6 +899,51 @@ def check_release(rep: Report) -> None:
             "BUILD.md documents the split release assets")
 
 
+def check_packaging(rep: Report) -> None:
+    print("\nportable and Bazzite packaging")
+    text = lambda rel: (ROOT / rel).read_text("utf-8")
+
+    install = text("packaging/portable/install.sh")
+    rep.add("share/doc/bunny-os/BAZZITE.md" in install,
+            "portable install points at the Bazzite documentation")
+
+    containerfile = text("packaging/bazzite/Containerfile")
+    rep.add("ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite-deck:stable" in containerfile,
+            "Bazzite layer builds from the official Deck image")
+    rep.add(bool(re.search(r"--prefix\s+/usr(?![\w/])", containerfile))
+            and "--prefix /usr/local" not in containerfile,
+            "Bazzite layer installs into /usr, not the ostree-pruned /usr/local")
+    rep.add("BUNNY_INSTALL_IMAGE=1" in containerfile,
+            "Bazzite layer enables the service without starting it")
+
+    live = text("packaging/bazzite/live-iso.sh")
+    rep.add("--transport=containers-storage" in live,
+            "live image installs the image it was built from, offline")
+    rep.add("iso.yaml" in live and "root=live:CDLABEL" in live,
+            "live image writes the boot contract titanoboa reads")
+    rep.add("dracut" in live and "dmsquash-live" in live,
+            "live image rebuilds the initramfs with the live hooks")
+
+    workflow = text(".github/workflows/build-bazzite-iso.yml")
+    rep.add(bool(re.search(r"ublue-os/titanoboa@[0-9a-f]{40}", workflow)),
+            "Bazzite ISO workflow pins titanoboa to a commit")
+    rep.add("scripts/build-portable.sh" in workflow,
+            "Bazzite ISO workflow builds the payload from this repository")
+    rep.add("split -b" in workflow,
+            "Bazzite ISO workflow splits an ISO above the 2 GiB asset limit")
+    rep.add("v*-bazzite" in workflow,
+            "Bazzite ISO workflow publishes on its own tag pattern")
+
+    doc = text("docs/BAZZITE.md")
+    rep.add("lizard mode" in doc and "on-screen keyboard" in doc,
+            "BAZZITE.md explains controller-only setup")
+    rep.add("--portable" in doc and "/var/lib/bunny" in doc,
+            "BAZZITE.md explains portable mode and where state lives")
+
+    rep.add("tools/portable-smoke.sh" in text(".github/workflows/build-iso.yml"),
+            "CI runs the portable payload smoke test")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -901,7 +957,7 @@ def main(argv: list[str] | None = None) -> int:
     for check in (check_required, check_json, check_units, check_desktop,
                   check_line_endings, check_packages, check_targets,
                   check_ai_safety, check_ui, check_recovery, check_build,
-                  check_release):
+                  check_packaging, check_release):
         check(rep)
 
     print()

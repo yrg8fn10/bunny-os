@@ -21,6 +21,13 @@ Design rules
 Usage:
     bunny-setupd [--port 8430] [--ui /opt/bunny/panel/ui]
                  [--state-dir /var/lib/bunny] [--force] [--check]
+                 [--portable]
+
+``--portable`` is the "Bunny OS on an existing system" mode used by the
+portable install (Bazzite, SteamOS desktop, any distro).  There is no setup
+account, no SDDM autologin and no session to restart: the machine already has
+a human account, so the wizard only configures the network and the time zone,
+writes the marker and leaves the desktop alone.
 """
 from __future__ import annotations
 
@@ -161,10 +168,14 @@ def split_nmcli(line: str) -> list[str]:
 # backend
 # ---------------------------------------------------------------------------
 class SetupService:
-    def __init__(self, *, state_dir: Path, etc_dir: Path, dry_run: bool = False) -> None:
+    def __init__(self, *, state_dir: Path, etc_dir: Path, dry_run: bool = False,
+                 portable: bool = False) -> None:
         self.state_dir = state_dir
         self.etc_dir = etc_dir
         self.dry_run = dry_run
+        # Portable install: an existing system with a human account already in
+        # place. No bootstrap account, no SDDM drop-in, no session restart.
+        self.portable = portable
         # Overridable so the setup service can be exercised off-target; on a
         # real image this is the system tzdata directory.
         self.zoneinfo = Path("/usr/share/zoneinfo")
@@ -192,6 +203,8 @@ class SetupService:
 
     def preview(self) -> bool:
         """True when the live image was booted with bunny.oobe=1."""
+        if self.portable:
+            return False
         if self.preview_done.exists():
             return False
         return "bunny.oobe=1" in parse_kernel_cmdline().split()
@@ -200,6 +213,10 @@ class SetupService:
         return Path("/run/archiso").exists()
 
     def pending(self) -> bool:
+        # The portable install decides on the marker alone: there is no live
+        # medium to preview and no account to create.
+        if self.portable:
+            return not self.marker.exists()
         return not self.marker.exists() or self.preview()
 
     def bootstrap_user(self) -> str:
@@ -407,6 +424,9 @@ class SetupService:
             raise SetupError("Keep the full name under 64 characters.")
 
     def create_account(self, username: str, full_name: str, password: str) -> dict:
+        if self.portable:
+            raise SetupError("This system already has an account; the portable "
+                             "install does not create one.")
         self.validate_account(username, full_name, password)
         if self.dry_run:
             return {"username": username, "created": False, "dry_run": True}
@@ -482,6 +502,19 @@ class SetupService:
         os.chmod(self.sddm_dropin, 0o644)
 
     def finish(self) -> dict:
+        if self.portable:
+            target = self.session_user()
+            if self.dry_run:
+                return {"user": target, "portable": True, "dry_run": True}
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            self.marker.write_text(stamp + "\n", "utf-8")
+            self.account_ready.write_text(stamp + "\n", "utf-8")
+            os.chmod(self.marker, 0o644)
+            os.chmod(self.account_ready, 0o644)
+            # The desktop, its greeter and its session are not ours to touch.
+            return {"user": target, "portable": True}
+
         users = human_users()
         if self.preview():
             target = users[0] if users else self.session_user()
@@ -527,8 +560,9 @@ class SetupService:
             "mode": "preview" if self.preview() else ("oobe" if not self.marker.exists() else "done"),
             "live": self.live(),
             "preview": self.preview(),
+            "portable": self.portable,
             "done": self.marker.exists(),
-            "needs_account": not users,
+            "needs_account": (not users) and not self.portable,
             "existing_user": users[0] if users else None,
             "bootstrap_user": self.setup_user(),
             "network": status,
@@ -733,7 +767,8 @@ class SetupHandler(BaseHTTPRequestHandler):
                 result = self.service.finish()
                 self.service.audit("finish", result.get("user", ""))
                 self._json(200, {"ok": True, **result})
-                threading.Thread(target=self._restart_display, daemon=True).start()
+                if not self.service.portable:
+                    threading.Thread(target=self._restart_display, daemon=True).start()
             elif route == "/api/power":
                 action = str(body.get("action") or "")
                 if action not in {"reboot", "poweroff"}:
@@ -776,6 +811,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="serve even when .oobe-done exists (development)")
     parser.add_argument("--check", action="store_true",
                         help="exit 0 when the wizard should run, 1 when it should not")
+    parser.add_argument("--portable", action="store_true",
+                        help="run on an existing system: no account creation, "
+                             "no SDDM drop-in, no session restart")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -786,7 +824,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     service = SetupService(state_dir=args.state_dir, etc_dir=args.etc_dir,
-                           dry_run=os.environ.get("BUNNY_SETUP_DRY_RUN") == "1")
+                           dry_run=os.environ.get("BUNNY_SETUP_DRY_RUN") == "1",
+                           portable=args.portable)
     if args.check:
         return 0 if (service.pending() or args.force) else 1
     if not service.pending() and not args.force:

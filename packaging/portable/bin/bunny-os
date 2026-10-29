@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-os - open the Bunny OS Control Panel from a desktop session.
+#
+#  Installed next to bunny-panel, so it finds its own prefix without a baked-in
+#  path: the same file works from /usr/local/bin (portable install) and from
+#  /usr/libexec/bunny (Bazzite image).
+# =============================================================================
+set -Eeuo pipefail
+
+BIN="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd -P)"
+BASE="$(dirname -- "${BIN}")"
+if [[ -d "${BASE}/share/bunny/ui" ]]; then
+  : "${BUNNY_PANEL_UI:=${BASE}/share/bunny/ui}"
+else
+  : "${BUNNY_PANEL_UI:=${BASE}/lib/bunny/ui}"
+fi
+export BUNNY_PANEL_UI
+
+# First run after install: the wizard owns the screen until it has written the
+# marker. After that this launches straight into the panel.
+if [[ ! -e /var/lib/bunny/.oobe-done ]] \
+   && systemctl is-active --quiet bunny-setupd.service 2>/dev/null; then
+  exec "${BIN}/bunny-panel" --setup --kiosk
+fi
+exec "${BIN}/bunny-panel" --kiosk

@@ -14,7 +14,7 @@
 # =============================================================================
 set -Eeuo pipefail
 
-UI_DIR="/opt/bunny/panel/ui"
+UI_DIR="${BUNNY_PANEL_UI:-/opt/bunny/panel/ui}"
 UI_FILE="${UI_DIR}/index.html"
 NATIVE_SHELL="${BUNNY_PANEL_SHELL:-/usr/lib/bunny/panel-shell}"
 BRIDGE="${BUNNY_PANEL_BRIDGE:-/usr/local/bin/bunny-panel-bridge}"
@@ -73,12 +73,25 @@ if (( ! SETUP )) && [[ -x "${NATIVE_SHELL}" ]]; then
   exec "${NATIVE_SHELL}" --ui "${UI_FILE}"
 fi
 
-CHROMIUM=""
-for candidate in chromium chromium-browser google-chrome-stable; do
-  if command -v "${candidate}" >/dev/null 2>&1; then CHROMIUM="${candidate}"; break; fi
+# Any Chromium-family browser works. Bazzite and SteamOS may only have the
+# Flatpak build, and the Deck's Gaming Mode has no X11, so the Wayland flags
+# below are added only when a Wayland session is actually present.
+CHROMIUM_CMD=()
+for candidate in chromium chromium-browser google-chrome-stable google-chrome \
+                 brave-browser microsoft-edge-stable; do
+  if command -v "${candidate}" >/dev/null 2>&1; then CHROMIUM_CMD=("${candidate}"); break; fi
 done
+if [[ ${#CHROMIUM_CMD[@]} -eq 0 ]] && command -v flatpak >/dev/null 2>&1; then
+  for app in org.chromium.Chromium com.google.Chrome com.brave.Browser; do
+    if flatpak info "${app}" >/dev/null 2>&1; then
+      CHROMIUM_CMD=(flatpak run "${app}")
+      log "using flatpak ${app}"
+      break
+    fi
+  done
+fi
 
-if [[ -z "${CHROMIUM}" ]]; then
+if [[ ${#CHROMIUM_CMD[@]} -eq 0 ]]; then
   log "cannot launch: no panel shell and no Chromium"
   exit 1
 fi
@@ -169,22 +182,25 @@ CHROME_ARGS=(
   --no-default-browser-check
   --disable-features=Translate,MediaRouter
   --password-store=basic
-  --enable-features=UseOzonePlatform
-  --ozone-platform=wayland
   --touch-events=enabled
   --overscroll-history-navigation=0
   --disable-pinch
 )
+# The Deck (cage/gamescope) and Bazzite's KDE session are Wayland; a desktop
+# session on X11 must not be given the Ozone flag or Chromium refuses to start.
+if [[ -n "${WAYLAND_DISPLAY:-}" || "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+  CHROME_ARGS+=(--enable-features=UseOzonePlatform --ozone-platform=wayland)
+fi
 if (( KIOSK )); then
   CHROME_ARGS+=(--kiosk --start-fullscreen)
 fi
 
-log "using ${CHROMIUM} (kiosk=${KIOSK}) at ${PANEL_URL}"
+log "using ${CHROMIUM_CMD[*]} (kiosk=${KIOSK}) at ${PANEL_URL}"
 
 # Run the browser in the foreground so the trap can reap the bridge when the
 # kiosk session ends. `exec` here would orphan every background child.
 set +e
-"${CHROMIUM}" "${CHROME_ARGS[@]}"
+"${CHROMIUM_CMD[@]}" "${CHROME_ARGS[@]}"
 STATUS=$?
 set -e
 

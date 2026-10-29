@@ -835,9 +835,28 @@ function updateFinishSummary() {
 async function finish() {
   setBusy(true);
   try {
-    await api('/api/finish', { method: 'POST', body: {}, timeout: 30000 });
+    const result = await api('/api/finish', { method: 'POST', body: {}, timeout: 30000 });
     if (MOCK) {
       toast('Setup complete', 'In a real session Gaming Mode would start now.');
+      setBusy(false);
+      return;
+    }
+    if (result?.portable) {
+      // Portable install (Bazzite, SteamOS desktop, any distro): the desktop
+      // belongs to the host, so there is no session to restart. Say so and
+      // leave the page usable instead of showing a spinner that never ends.
+      toast('Setup complete', 'Open Bunny OS from your applications menu.');
+      stepEl.innerHTML = `
+        <div class="step__hero" style="grid-column:1/-1;align-items:center;text-align:center">
+          <div class="step__art">${icon('party', 72)}</div>
+          <div>
+            <h1 class="step__title">All <em>set</em></h1>
+            <p class="step__lead">Close this window and start Bunny OS from your applications menu.</p>
+          </div>
+        </div>`;
+      $('progress').hidden = true;
+      $('next').hidden = true;
+      $('back').hidden = true;
       setBusy(false);
       return;
     }

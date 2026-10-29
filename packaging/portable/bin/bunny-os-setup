@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-os-setup - the first-boot wizard, and nothing else.
+#
+#  Used by the autostart entry: it opens once on the first login after install
+#  and exits immediately on every later login, so it costs nothing once setup
+#  is done.
+# =============================================================================
+set -Eeuo pipefail
+
+BIN="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" >/dev/null 2>&1 && pwd -P)"
+BASE="$(dirname -- "${BIN}")"
+if [[ -d "${BASE}/share/bunny/ui" ]]; then
+  : "${BUNNY_PANEL_UI:=${BASE}/share/bunny/ui}"
+else
+  : "${BUNNY_PANEL_UI:=${BASE}/lib/bunny/ui}"
+fi
+export BUNNY_PANEL_UI
+
+[[ -e /var/lib/bunny/.oobe-done ]] && exit 0
+
+if ! systemctl is-active --quiet bunny-setupd.service 2>/dev/null; then
+  printf 'bunny-os-setup: bunny-setupd.service is not running.\n' >&2
+  printf '  Try: sudo systemctl start bunny-setupd\n' >&2
+  exit 1
+fi
+
+exec "${BIN}/bunny-panel" --setup --kiosk

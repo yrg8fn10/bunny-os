@@ -102,6 +102,9 @@ ok "python compile"
 "${PYTHON}" tools/setupd-smoke.py || die "first-boot setup service smoke test failed"
 ok "bunny-setupd smoke test"
 
+bash tools/portable-smoke.sh || die "portable payload smoke test failed"
+ok "portable payload smoke test"
+
 # The panel has no bundler and no node_modules; a smoke test driven by a
 # headless browser is the only executable check it gets. Skip it when no
 # browser is installed rather than failing a legitimate release machine.

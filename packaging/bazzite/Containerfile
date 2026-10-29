@@ -1,0 +1,56 @@
+# =============================================================================
+#  Bunny OS on Bazzite - Steam Deck LCD
+# -----------------------------------------------------------------------------
+#  Layers the Bunny OS payload (Control Panel, its bridge and the first-boot
+#  wizard) on top of the official Bazzite Deck image, so the machine keeps the
+#  boot chain, kernel, firmware and Gaming Mode that are known to work on the
+#  Deck, and still gets Bunny OS on top.
+#
+#  Everything is baked into the immutable image: no first-boot installer, no
+#  /usr/local, nothing that an rpm-ostree update would wipe. The only runtime
+#  state is /var/lib/bunny (the setup marker and the audit log).
+#
+#  Build (CI does this, see .github/workflows/build-bazzite-iso.yml):
+#      scripts/build-portable.sh
+#      cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
+#      podman build -t localhost/bunny-deck:latest packaging/bazzite/
+#
+#  Then turn the image into an ISO with ublue's titanoboa:
+#      ublue-os/titanoboa  image-ref: localhost/bunny-deck:latest
+# =============================================================================
+ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite-deck:stable
+FROM ${BASE_IMAGE}
+
+# The Bun Bun agent and the panel are stdlib Python and a dependency-free web
+# UI. Chromium is the one thing we add: the Deck has no terminal browser and
+# the wizard has to render before anything is installed.
+RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=False python3 chromium; \
+    dnf clean all; \
+    rm -rf /var/cache/dnf /var/cache/libdnf5
+
+COPY bunny-os-portable.tar.gz /tmp/bunny-os-portable.tar.gz
+
+# BUNNY_INSTALL_IMAGE tells the portable installer it is running inside an
+# image build: enable the unit, never try to start it, and never reload a
+# daemon that does not exist yet.
+RUN set -eux; \
+    tar -xzf /tmp/bunny-os-portable.tar.gz -C /tmp; \
+    BUNNY_INSTALL_IMAGE=1 /tmp/bunny-os-portable-*/install.sh --prefix /usr; \
+    rm -rf /tmp/bunny-os-portable*
+
+# The host's session, greeter and account stay Bazzite's. The wizard only
+# writes the marker and the network/time-zone settings.
+RUN set -eux; \
+    mkdir -p /var/lib/bunny; \
+    chmod 0755 /var/lib/bunny; \
+    test -x /usr/bin/bunny-setupd; \
+    test -f /usr/lib/bunny/ui/setup/index.html; \
+    test -f /usr/lib/systemd/system/bunny-setupd.service
+
+ARG BUNNY_VERSION=0.0.0
+LABEL org.opencontainers.image.title="Bunny OS (Bazzite Deck base)" \
+      org.opencontainers.image.description="Bazzite Deck with the Bunny OS Control Panel and first-boot wizard" \
+      org.opencontainers.image.version="${BUNNY_VERSION}" \
+      org.opencontainers.image.vendor="Bunny OS" \
+      com.bunny-os.variant="bazzite-deck"

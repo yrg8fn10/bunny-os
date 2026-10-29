@@ -153,20 +153,26 @@ Caveats, stated plainly:
 
 `.github/workflows/build-iso.yml` runs three jobs:
 
-1. **verify** — `tools/verify.py`, shell syntax, Bun Bun tests and the two
-   smoke tests (`recovery-smoke.sh`, `installer-smoke.sh`).
+1. **verify** — `tools/verify.py`, shell syntax, Bun Bun tests and the smoke
+   tests (`recovery-smoke.sh`, `installer-smoke.sh`, `setupd-smoke.py`,
+   `portable-smoke.sh`).
 2. **build** — privileged Arch container on `ubuntu-latest`, uploads the ISO,
    checksum and manifest as workflow artefacts.
 3. **release** — on a `v*` tag, attaches the same files to a GitHub release.
 
 Trigger it manually from the Actions tab (`workflow_dispatch`) or by pushing a
 tag. A manual run lets you choose the **target**: `generic` (default) or `deck`.
-Pushes and tags always build the generic image.
+A `v*` tag has no input, so it always builds the **deck** image.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
+
+There is a second, separate pipeline: `.github/workflows/build-bazzite-iso.yml`
+layers the portable payload on the official Bazzite Deck image and wraps it in
+an ISO with ublue's titanoboa. It runs from the Actions tab or from a
+`v*-bazzite` tag, and is documented in `docs/BAZZITE.md`.
 
 GitHub-hosted runners allow loop devices inside privileged containers, which
 is why this path works where Docker Desktop often does not. Builds take
@@ -179,7 +185,7 @@ is why this path works where Docker Desktop often does not. Builds take
 ```json
 {
   "product": "Bunny OS",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "channel": "stable",
   "build_id": "20261026T101500Z",
   "target": "generic",
@@ -268,8 +274,8 @@ packages with a dated mirror and build from a clean container.
 Pushing a `v*` tag builds and publishes automatically:
 
 ```
-git tag -a v0.1.0-beta.1 -m "beta 1"
-git push origin v0.1.0-beta.1
+git tag -a v0.2.0-beta.1 -m "beta 1"
+git push origin v0.2.0-beta.1
 ```
 
 A tag has no workflow input, so it builds the `deck` profile (that is what the

@@ -1,0 +1,212 @@
+name: build-bazzite-iso
+
+# Bunny OS on top of Bazzite, for the Steam Deck LCD.
+#
+# Instead of building an Arch image from scratch (build-iso.yml), this layers
+# the Bunny OS payload on the official Bazzite Deck image and wraps the result
+# in a bootable ISO with ublue's titanoboa. The Deck therefore keeps the boot
+# chain, kernel, firmware and Gaming Mode that are known to work on the
+# hardware, and still boots into Bunny OS.
+#
+# A run takes 60-120 minutes and needs roughly 60 GB of disk, which is why the
+# job frees the runner and puts podman's storage on a btrfs loopback first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Bazzite base image"
+        type: string
+        default: ghcr.io/ublue-os/bazzite-deck:stable
+      iso_label:
+        description: "ISO volume label"
+        type: string
+        default: BunnyOS-Live
+  push:
+    tags: ["v*-bazzite"]
+
+permissions:
+  contents: write
+
+env:
+  BASE_IMAGE: ${{ inputs.base_image || 'ghcr.io/ublue-os/bazzite-deck:stable' }}
+  ISO_LABEL: ${{ inputs.iso_label || 'BunnyOS-Live' }}
+  IMAGE_REF: localhost/bunny-deck:latest
+  # Pinned so a change upstream cannot silently alter the image under us.
+  TITANOBOA_ACTION: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4
+
+concurrency:
+  group: build-bazzite-iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Static verification
+        run: python3 tools/verify.py --strict
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          bash -n packaging/portable/install.sh
+          bash -n packaging/portable/uninstall.sh
+          bash -n packaging/portable/bin/bunny-os
+          bash -n packaging/portable/bin/bunny-os-setup
+          bash -n packaging/bazzite/live-iso.sh
+          bash -n scripts/build-portable.sh
+
+  build:
+    name: build Bazzite Deck ISO
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: true
+
+      - name: Put container storage on a btrfs loopback
+        run: |
+          set -euo pipefail
+          sudo truncate -s 110G /mnt/podman-storage.img
+          sudo mkfs.btrfs -f -m single -d single /mnt/podman-storage.img
+          sudo podman system reset --force
+          sudo systemctl stop podman.service
+          LOOP=$(sudo losetup --find --show --direct-io=on /mnt/podman-storage.img)
+          sudo mkdir -p /mnt/podman-storage
+          sudo mount -o compress-force=zstd:2,discard=async,noatime "$LOOP" /mnt/podman-storage
+          sudo mkdir -p /mnt/podman-storage/storage /mnt/podman-storage/tmp
+          sudo mount --bind /mnt/podman-storage/storage /var/lib/containers/storage
+          sudo systemctl start podman.service
+          df -h /var/lib/containers/storage
+
+      - uses: actions/checkout@v4
+
+      - name: Build the portable payload
+        run: |
+          set -euo pipefail
+          bash scripts/build-portable.sh --out out
+          cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
+          ls -lh packaging/bazzite/bunny-os-portable.tar.gz
+
+      - name: Build the Bunny OS Deck image
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
+            --cap-add sys_admin --security-opt label=disable \
+            --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+            --build-arg BUNNY_VERSION="${VERSION}" \
+            -t "${IMAGE_REF}" \
+            packaging/bazzite/
+          sudo podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+
+      - name: Make the image a live installer
+        run: |
+          set -euo pipefail
+          # The script has to run inside the image and its result has to become
+          # a new image, so: create, start to completion, commit, drop.
+          cid="$(sudo podman create --name bunny-live \
+            --volume "${PWD}/packaging/bazzite/live-iso.sh:/src/live-iso.sh:ro" \
+            -e IMAGE_REF="${IMAGE_REF}" -e ISO_LABEL="${ISO_LABEL}" \
+            "${IMAGE_REF}" bash /src/live-iso.sh)"
+          sudo podman start -a "${cid}"
+          sudo podman commit \
+            --change 'CMD ["/sbin/init"]' \
+            "${cid}" localhost/bunny-deck:live
+          sudo podman rm "${cid}"
+          sudo podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+
+      - name: Show disk space
+        if: always()
+        run: sudo df -h
+
+      - name: Build the ISO
+        id: iso
+        uses: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4
+        with:
+          image-ref: localhost/bunny-deck:live
+          iso-dest: BunnyOS-deck-bazzite.iso
+
+      - name: Checksum
+        id: checksum
+        run: |
+          set -euo pipefail
+          iso="${{ steps.iso.outputs.iso-dest }}"
+          test -s "${iso}"
+          sha256sum "${iso}" | tee "${iso}.sha256"
+          echo "iso=${iso}" >> "$GITHUB_OUTPUT"
+          ls -lh "${iso}"
+
+      - name: Upload ISO artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BunnyOS-deck-bazzite-${{ github.run_number }}
+          path: |
+            BunnyOS-deck-bazzite.iso
+            BunnyOS-deck-bazzite.iso.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Build log on failure
+        if: failure()
+        run: sudo journalctl -u podman --no-pager | tail -200 || true
+
+  release:
+    name: publish the Bazzite ISO
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: BunnyOS-deck-bazzite-${{ github.run_number }}
+          path: dist
+
+      - name: Prepare assets
+        run: |
+          set -euo pipefail
+          iso="$(find dist -maxdepth 1 -name '*.iso' -print -quit)"
+          test -n "${iso}"
+          size="$(stat -c%s "${iso}")"
+          if [ "${size}" -gt 2000000000 ]; then
+            base="$(basename "${iso}")"
+            ( cd dist \
+              && split -b 1900M -d --numeric-suffixes=1 --suffix-length=2 \
+                   --additional-suffix=.part "${base}" "${base}." \
+              && rm -f "${base}" )
+            note=dist/READ-ME-FIRST.txt
+            echo "Bunny OS on Bazzite - ${base}" > "${note}"
+            echo "" >> "${note}"
+            echo "The image is larger than GitHub's 2 GiB asset limit, so it ships" >> "${note}"
+            echo "as ordered parts. Join them, check the checksum, then flash." >> "${note}"
+            echo "" >> "${note}"
+            echo "  Windows:      copy /b ${base}.01.part+${base}.02.part ${base}" >> "${note}"
+            echo "  Linux/macOS:  cat ${base}.??.part > ${base}" >> "${note}"
+            echo "  Flash:        Rufus - ISO Image mode, or dd if=${base} of=/dev/sdX bs=4M" >> "${note}"
+            echo "" >> "${note}"
+            echo "On the Steam Deck hold Vol- while powering on to boot the USB device." >> "${note}"
+          fi
+          ls -lh dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="Bunny OS on Bazzite (Steam Deck LCD). Boots the official Bazzite Deck image with the Bunny OS Control Panel and first-boot wizard layered on top."
+          gh release view "${TAG}" >/dev/null 2>&1 \
+            && gh release upload "${TAG}" dist/* --clobber \
+            || gh release create "${TAG}" dist/* --title "Bunny OS on Bazzite ${TAG#v}" \
+                 --notes "${notes}" --prerelease
