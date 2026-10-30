@@ -73,7 +73,7 @@ for path in \
   "usr/local/bin/bunny-os-setup" \
   "usr/local/lib/bunny/ui/index.html" \
   "usr/local/lib/bunny/ui/setup/index.html" \
-  "etc/systemd/system/bunny-setupd.service" \
+  "usr/local/lib/systemd/system/bunny-setupd.service" \
   "etc/bunny/build-info.json" \
   "usr/local/share/applications/bunny-os.desktop" \
   "usr/local/share/applications/bunny-os-setup.desktop" \
@@ -85,7 +85,7 @@ done
 check "755" "$(stat -c '%a' "${dest}/usr/local/bin/bunny-setupd" 2>/dev/null || stat -f '%Lp' "${dest}/usr/local/bin/bunny-setupd" | sed 's/^0//')" \
   "setup service is executable"
 
-unit="$(cat "${dest}/etc/systemd/system/bunny-setupd.service")"
+unit="$(cat "${dest}/usr/local/lib/systemd/system/bunny-setupd.service")"
 check "yes" "$(grep -q -- '--portable' <<<"${unit}" && echo yes || echo no)" \
   "unit runs the wizard in portable mode"
 check "yes" "$(grep -q 'ExecStart=/usr/local/bin/bunny-setupd' <<<"${unit}" && echo yes || echo no)" \
@@ -119,7 +119,7 @@ check "no" "$([[ -e "${dest}/usr/local/bin/bunny-panel" ]] && echo yes || echo n
   "uninstall removes the panel"
 check "no" "$([[ -e "${dest}/usr/local/lib/bunny" ]] && echo yes || echo no)" \
   "uninstall removes the UI tree"
-check "no" "$([[ -e "${dest}/etc/systemd/system/bunny-setupd.service" ]] && echo yes || echo no)" \
+check "no" "$([[ -e "${dest}/usr/local/lib/systemd/system/bunny-setupd.service" ]] && echo yes || echo no)" \
   "uninstall removes the unit"
 check "yes" "$([[ -e "${dest}/var/lib/bunny" ]] && echo yes || echo no)" \
   "uninstall keeps the setup marker by default"

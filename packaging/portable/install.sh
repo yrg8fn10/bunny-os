@@ -45,7 +45,10 @@ PREFIX="${PREFIX%/}"
 LIB="${PREFIX}/lib/bunny"
 BIN="${PREFIX}/bin"
 APPS="${PREFIX}/share/applications"
-UNIT_DIR="/etc/systemd/system"
+# Units belong next to the binaries, not in /etc: on an image build /usr is
+# the only durable place, and systemd reads /usr/local/lib/systemd/system too,
+# so the same path works for a portable install.
+UNIT_DIR="${PREFIX}/lib/systemd/system"
 STATE_DIR="/var/lib/bunny"
 ETC_DIR="/etc/bunny"
 AUTOSTART_DIR="/etc/xdg/autostart"

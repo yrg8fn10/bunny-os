@@ -47,7 +47,7 @@ for file in "${DESTDIR}${BIN}/bunny-panel" \
             "${DESTDIR}${BIN}/bunny-setupd" \
             "${DESTDIR}${BIN}/bunny-os" \
             "${DESTDIR}${BIN}/bunny-os-setup" \
-            "${DESTDIR}/etc/systemd/system/bunny-setupd.service" \
+            "${DESTDIR}${PREFIX}/lib/systemd/system/bunny-setupd.service" \
             "${DESTDIR}${APPS}/bunny-os.desktop" \
             "${DESTDIR}${APPS}/bunny-os-setup.desktop" \
             "${DESTDIR}/etc/xdg/autostart/bunny-os-setup.desktop" \
