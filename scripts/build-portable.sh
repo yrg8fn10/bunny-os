@@ -38,6 +38,10 @@ done
 
 VERSION="$(tr -d '[:space:]' < "${ROOT}/VERSION")"
 BUILD_ID="${BUILD_ID:-$(stamp_short)}"
+# safe_rmrf only accepts paths that look like build directories, and a
+# relative --out would never match that pattern.
+mkdir -p "${OUT_DIR}"
+OUT_DIR="$(cd -- "${OUT_DIR}" >/dev/null 2>&1 && pwd -P)"
 NAME="bunny-os-portable-${VERSION}"
 STAGE_ROOT="${OUT_DIR}/portable"
 STAGE="${STAGE_ROOT}/${NAME}"
