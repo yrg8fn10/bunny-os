@@ -245,3 +245,4 @@ jobs:
 
       - name: Build log on failure
         if: failure()
+        run: sudo journalctl -u podman --no-pager | tail -200 || true
