@@ -15,8 +15,9 @@
 #      cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
 #      podman build -t localhost/bunny-deck:latest packaging/bazzite/
 #
-#  Then turn the image into an ISO with ublue's titanoboa:
-#      ublue-os/titanoboa  image-ref: localhost/bunny-deck:latest
+#  This is the image that ends up on the Deck.  The ISO is built from a
+#  separate live medium, because booting this image would start Gaming Mode:
+#  see Containerfile.live.
 # =============================================================================
 ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite-deck:stable
 FROM ${BASE_IMAGE}

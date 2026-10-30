@@ -5,6 +5,8 @@
 *.iso.sha256
 *.iso.sig
 *.part
+*.oci
+packaging/bazzite/bunny-os-portable.tar.gz
 
 # AI model weights / voices (fetched, never committed)
 vendor/models/

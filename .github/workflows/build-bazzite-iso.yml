@@ -2,11 +2,17 @@ name: build-bazzite-iso
 
 # Bunny OS on top of Bazzite, for the Steam Deck LCD.
 #
-# Instead of building an Arch image from scratch (build-iso.yml), this layers
-# the Bunny OS payload on the official Bazzite Deck image and wraps the result
-# in a bootable ISO with ublue's titanoboa. The Deck therefore keeps the boot
-# chain, kernel, firmware and Gaming Mode that are known to work on the
-# hardware, and still boots into Bunny OS.
+# Bazzite's own ISO boots the *desktop* image and installs the *Deck* image
+# from container storage; booting the Deck image would start Gaming Mode, which
+# is no place to run an installer.  This workflow does the same:
+#
+#   bunny-deck    = ghcr.io/ublue-os/bazzite-deck:stable + the Bunny OS layer
+#                   (the image that ends up on the Deck)
+#   bunny-live    = ghcr.io/ublue-os/bazzite:stable + Anaconda + bunny-deck
+#                   in container storage (the image titanoboa turns into the ISO)
+#
+# The Deck therefore keeps the boot chain, kernel, firmware and Gaming Mode that
+# are known to work on the hardware, and still runs Bunny OS.
 #
 # A run takes 60-120 minutes and needs roughly 60 GB of disk, which is why the
 # job frees the runner and puts podman's storage on a btrfs loopback first.
@@ -15,9 +21,13 @@ on:
   workflow_dispatch:
     inputs:
       base_image:
-        description: "Bazzite base image"
+        description: "Bazzite Deck image (installed on the Deck)"
         type: string
         default: ghcr.io/ublue-os/bazzite-deck:stable
+      live_image:
+        description: "Bazzite desktop image (live installer environment)"
+        type: string
+        default: ghcr.io/ublue-os/bazzite:stable
       iso_label:
         description: "ISO volume label"
         type: string
@@ -30,6 +40,7 @@ permissions:
 
 env:
   BASE_IMAGE: ${{ inputs.base_image || 'ghcr.io/ublue-os/bazzite-deck:stable' }}
+  LIVE_IMAGE: ${{ inputs.live_image || 'ghcr.io/ublue-os/bazzite:stable' }}
   ISO_LABEL: ${{ inputs.iso_label || 'BunnyOS-Live' }}
   IMAGE_REF: localhost/bunny-deck:latest
   # Pinned so a change upstream cannot silently alter the image under us.
@@ -85,7 +96,7 @@ jobs:
           sudo mkdir -p /mnt/podman-storage/storage /mnt/podman-storage/tmp
           sudo mount --bind /mnt/podman-storage/storage /var/lib/containers/storage
           sudo systemctl start podman.service
-          df -h /var/lib/containers/storage
+          sudo df -h /var/lib/containers/storage
 
       - uses: actions/checkout@v4
 
@@ -108,20 +119,30 @@ jobs:
             packaging/bazzite/
           sudo podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
 
-      - name: Make the image a live installer
+      - name: Save the payload as an OCI archive
         run: |
           set -euo pipefail
-          # The script has to run inside the image and its result has to become
-          # a new image, so: create, start to completion, commit, drop.
-          cid="$(sudo podman create --name bunny-live \
-            --volume "${PWD}/packaging/bazzite/live-iso.sh:/src/live-iso.sh:ro" \
-            -e IMAGE_REF="${IMAGE_REF}" -e ISO_LABEL="${ISO_LABEL}" \
-            "${IMAGE_REF}" bash /src/live-iso.sh)"
-          sudo podman start -a "${cid}"
-          sudo podman commit \
-            --change 'CMD ["/sbin/init"]' \
-            "${cid}" localhost/bunny-deck:live
-          sudo podman rm "${cid}"
+          # The live image loads this and Anaconda installs from it, so the
+          # install needs no registry and no network.
+          sudo podman save --format oci-archive \
+            -o packaging/bazzite/bunny-deck.oci "${IMAGE_REF}"
+          sudo chown "$(id -u):$(id -g)" packaging/bazzite/bunny-deck.oci
+          ls -lh packaging/bazzite/bunny-deck.oci
+
+      - name: Build the live installer image
+        run: |
+          set -euo pipefail
+          # Bazzite's own ISO boots the desktop image and installs the Deck
+          # image; booting the Deck image would start Gaming Mode instead of a
+          # desktop, so the live environment is the desktop image.
+          sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
+            --cap-add sys_admin --security-opt label=disable \
+            --build-arg LIVE_IMAGE="${LIVE_IMAGE}" \
+            --build-arg ISO_LABEL="${ISO_LABEL}" \
+            --build-arg PAYLOAD_TAG="${IMAGE_REF}" \
+            -t localhost/bunny-live:latest \
+            -f packaging/bazzite/Containerfile.live \
+            packaging/bazzite/
           sudo podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
 
       - name: Show disk space
@@ -132,7 +153,7 @@ jobs:
         id: iso
         uses: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4
         with:
-          image-ref: localhost/bunny-deck:live
+          image-ref: localhost/bunny-live:latest
           iso-dest: BunnyOS-deck-bazzite.iso
 
       - name: Checksum

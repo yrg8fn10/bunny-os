@@ -10,10 +10,23 @@ chain, kernel, firmware, controller handling and Gaming Mode that work on a
 Deck, so the only untested part is Bunny OS itself.
 
 ```
-ghcr.io/ublue-os/bazzite-deck:stable
-        + Bunny OS payload (Control Panel, bridge, first-boot wizard)
-        = localhost/bunny-deck:live   ->   titanoboa   ->   BunnyOS-deck-bazzite.iso
+ghcr.io/ublue-os/bazzite:stable            live medium
+   + anaconda-live, dracut-live, livesys
+   + localhost/bunny-deck:latest in storage
+        |
+        v
+   titanoboa -> BunnyOS-deck-bazzite.iso
+
+ghcr.io/ublue-os/bazzite-deck:stable       installed system
+   + Bunny OS payload (panel, bridge, wizard)
+        = localhost/bunny-deck:latest
 ```
+
+The live medium is the *desktop* image, not the Deck image: on the Deck image
+the machine boots into Gaming Mode, which is no place to run an installer. That
+is exactly how Bazzite builds its own ISO, and it means everything the installer
+needs (Anaconda, its profile, the live user, the desktop session) is stock
+upstream behaviour.
 
 > **Status: beta.** The image builds in CI and passes the same static
 > verification as the Arch ISO, but it has not been installed on physical
@@ -56,11 +69,15 @@ Control Panel.
 3. On the Deck, power off, hold **Volume Down**, press **Power**, and pick the
    USB device from the boot menu.
 
-4. The ISO boots the Bunny OS Deck image itself and starts Anaconda. Choose the
-   internal drive and let it install. The image is local to the medium, so the
-   installer works without a network connection.
+4. The medium boots a Bazzite desktop and opens the installer automatically.
+   Anaconda's UI is a browser window: use the touchscreen (or a USB mouse).
 
-5. Reboot without the stick. The Deck boots straight into the Bunny OS wizard.
+5. Choose the internal drive and let it install. The image is local to the
+   medium, so the installer works without a network connection.
+
+6. Reboot without the stick. The Deck boots into Gaming Mode for the first
+   time, installs its flatpak applications (Steam and friends) from Flathub,
+   and the Bunny OS wizard opens the first time you switch to Desktop Mode.
 
 Anaconda also gives you a **root password** and a **user account** step. The
 account you create there is the one you log in with afterwards; the wizard still
@@ -69,9 +86,10 @@ you skip it in the installer.
 
 ### First boot
 
-The first boot runs `bunny-setupd` and `bunny-panel --setup` as a Wayland kiosk.
-The wizard walks through welcome, network, time zone and account and then writes
-`/var/lib/bunny/.oobe-done`. From the next boot the panel opens directly.
+`bunny-setupd` is enabled at build time, so it is already running when the
+Desktop Mode session starts. `bunny-os-setup` opens the wizard on the first
+login after install and exits immediately on later logins; the wizard writes
+`/var/lib/bunny/.oobe-done` when it finishes.
 
 The wizard is designed for the Deck's controls alone:
 
@@ -119,24 +137,36 @@ The CI workflow `.github/workflows/build-bazzite-iso.yml` does the whole job:
 1. verifies the repository (`tools/verify.py --strict`, shell syntax);
 2. frees the runner and puts podman storage on a btrfs loopback;
 3. builds the portable tarball with `scripts/build-portable.sh`;
-4. `podman build packaging/bazzite/` on top of `bazzite-deck:stable`;
-5. runs `packaging/bazzite/live-iso.sh` inside the image to add the live root,
-   Anaconda and the `iso.yaml` contract, and commits the result;
-6. hands the committed image to `ublue-os/titanoboa`, which writes the ISO;
-7. publishes it as a release asset for `v*-bazzite` tags.
+4. builds `bunny-deck` from `packaging/bazzite/Containerfile` on top of
+   `bazzite-deck:stable` - the image that ends up on the Deck;
+5. saves that image to `packaging/bazzite/bunny-deck.oci`;
+6. builds `bunny-live` from `packaging/bazzite/Containerfile.live` on top of
+   `bazzite:stable`, runs `live-iso.sh` to add the live root, Anaconda, the
+   kickstart and the payload image in container storage;
+7. hands `bunny-live` to `ublue-os/titanoboa`, which writes the ISO;
+8. publishes it as a release asset for `v*-bazzite` tags.
 
 Locally, with podman and about 60 GB free:
 
 ```
 bash scripts/build-portable.sh
 cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
+
 sudo podman build --cap-add sys_admin --security-opt label=disable \
-  --build-arg BASE_IMAGE=ghcr.io/ublue-os/bazzite-deck:stable \
   --build-arg BUNNY_VERSION="$(cat VERSION)" \
-  -t localhost/bunny-deck:live packaging/bazzite/
+  -t localhost/bunny-deck:latest packaging/bazzite/
+
+sudo podman save --format oci-archive \
+  -o packaging/bazzite/bunny-deck.oci localhost/bunny-deck:latest
+
+sudo podman build --cap-add sys_admin --security-opt label=disable \
+  -f packaging/bazzite/Containerfile.live \
+  -t localhost/bunny-live:latest packaging/bazzite/
 ```
 
-Everything the image installs lives in `/usr` (ostree makes `/usr/local` a
+Then, with titanoboa checked out, `image-ref: localhost/bunny-live:latest`.
+
+Everything the payload installs lives in `/usr` (ostree makes `/usr/local` a
 symlink into `/var`, which an update can prune). The only runtime state is
 `/var/lib/bunny`: the setup marker and the audit log.
 
@@ -152,9 +182,13 @@ silently alter the image:
 
 - **No OLED support.** The `galileo` model is not validated; the same warning
   as in `docs/STEAMDECK.md` applies.
-- **No custom kernel.** Bazzite's kernel is used as shipped.
-- **No separate update channel for Bunny OS.** Bunny OS is part of the image, so
-  it moves when the image does.
+- **No custom kernel.** Bazzite's kernel is used as shipped, which means the
+  medium needs **Secure Boot disabled** (the Deck ships that way). Bazzite's own
+  ISO swaps in a Fedora-signed kernel for Secure Boot machines; this one does
+  not.
+- **No update channel yet.** The installed system's container reference points
+  at the local image, so `rpm-ostree upgrade` has nowhere to pull from. A new
+  Bunny OS release means a new ISO.
 - **No dual boot.** Installing replaces what is on the internal drive. Use a
   spare SSD or back up first.
 

@@ -101,7 +101,10 @@ REQUIRED = [
     "packaging/portable/install.sh",
     "packaging/portable/uninstall.sh",
     "packaging/bazzite/Containerfile",
+    "packaging/bazzite/Containerfile.live",
     "packaging/bazzite/live-iso.sh",
+    "packaging/bazzite/anaconda/bunny.conf",
+    "packaging/bazzite/anaconda/anaconda.conf",
     "scripts/build-portable.sh",
     "tools/portable-smoke.sh",
     ".github/workflows/build-iso.yml",
@@ -909,26 +912,48 @@ def check_packaging(rep: Report) -> None:
 
     containerfile = text("packaging/bazzite/Containerfile")
     rep.add("ARG BASE_IMAGE=ghcr.io/ublue-os/bazzite-deck:stable" in containerfile,
-            "Bazzite layer builds from the official Deck image")
+            "Bazzite payload builds from the official Deck image")
     rep.add(bool(re.search(r"--prefix\s+/usr(?![\w/])", containerfile))
             and "--prefix /usr/local" not in containerfile,
-            "Bazzite layer installs into /usr, not the ostree-pruned /usr/local")
+            "Bazzite payload avoids the ostree-pruned /usr/local")
     rep.add("BUNNY_INSTALL_IMAGE=1" in containerfile,
-            "Bazzite layer enables the service without starting it")
+            "Bazzite payload enables the service without starting it")
+
+    live_containerfile = text("packaging/bazzite/Containerfile.live")
+    rep.add("ghcr.io/ublue-os/bazzite:stable" in live_containerfile,
+            "live medium boots the Bazzite desktop image")
+    rep.add("bazzite-deck" not in live_containerfile,
+            "live medium does not boot Gaming Mode and fight the installer")
+    rep.add("bunny-deck.oci" in live_containerfile or "target=/ctx" in live_containerfile,
+            "live medium takes the payload from an OCI archive")
 
     live = text("packaging/bazzite/live-iso.sh")
     rep.add("--transport=containers-storage" in live,
-            "live image installs the image it was built from, offline")
+            "kickstart installs the image from local container storage")
+    rep.add("podman load -i /ctx/bunny-deck.oci" in live,
+            "live medium loads the payload instead of pulling it")
     rep.add("iso.yaml" in live and "root=live:CDLABEL" in live,
-            "live image writes the boot contract titanoboa reads")
+            "live medium writes the boot contract titanoboa reads")
     rep.add("dracut" in live and "dmsquash-live" in live,
-            "live image rebuilds the initramfs with the live hooks")
+            "live medium rebuilds the initramfs with the live hooks")
+    rep.add("livesys_session=kde" in live,
+            "live medium opens a desktop session, not Gaming Mode")
+    rep.add("interactive-defaults.ks" in live,
+            "live medium seeds the installer's default kickstart")
+    rep.add("bunny-installer.desktop" in live,
+            "the installer opens without a keyboard")
 
     workflow = text(".github/workflows/build-bazzite-iso.yml")
     rep.add(bool(re.search(r"ublue-os/titanoboa@[0-9a-f]{40}", workflow)),
             "Bazzite ISO workflow pins titanoboa to a commit")
     rep.add("scripts/build-portable.sh" in workflow,
             "Bazzite ISO workflow builds the payload from this repository")
+    rep.add("podman save --format oci-archive" in workflow,
+            "Bazzite ISO workflow hands the payload over as an archive")
+    rep.add("Containerfile.live" in workflow,
+            "Bazzite ISO workflow builds the live medium separately")
+    rep.add("image-ref: localhost/bunny-live:latest" in workflow,
+            "titanoboa builds the ISO from the live medium")
     rep.add("split -b" in workflow,
             "Bazzite ISO workflow splits an ISO above the 2 GiB asset limit")
     rep.add("v*-bazzite" in workflow,

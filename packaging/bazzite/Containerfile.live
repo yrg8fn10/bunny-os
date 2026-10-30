@@ -1,0 +1,32 @@
+# =============================================================================
+#  Bunny OS on Bazzite - Steam Deck LCD (installer environment)
+# -----------------------------------------------------------------------------
+#  Bazzite does not boot the Deck image as its live environment: the Deck image
+#  starts Gaming Mode, which is not a place to run an installer.  Their ISO
+#  boots the *desktop* image and installs the *Deck* image from container
+#  storage.  This file does the same for Bunny OS:
+#
+#      ghcr.io/ublue-os/bazzite:stable          <- live environment (this)
+#        + anaconda-live, dracut-live, livesys
+#        + /var/lib/containers/storage holding  <- installed system
+#          localhost/bunny-deck:latest
+#
+#  The payload is built by packaging/bazzite/Containerfile, saved to an OCI
+#  archive by the workflow, and loaded here.  Nothing is pulled at install
+#  time, so the install works without a network.
+# =============================================================================
+ARG LIVE_IMAGE=ghcr.io/ublue-os/bazzite:stable
+FROM ${LIVE_IMAGE}
+
+ARG ISO_LABEL=BunnyOS-Live
+ARG PAYLOAD_TAG=localhost/bunny-deck:latest
+ENV ISO_LABEL=${ISO_LABEL} \
+    PAYLOAD_TAG=${PAYLOAD_TAG}
+
+COPY live-iso.sh /src/live-iso.sh
+COPY anaconda/ /src/anaconda/
+
+# /ctx is the build directory: it holds bunny-deck.oci.  Bind-mounting keeps
+# the multi-gigabyte archive out of the image layer.
+RUN --mount=type=bind,source=.,target=/ctx \
+    bash /src/live-iso.sh
