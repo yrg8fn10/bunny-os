@@ -154,7 +154,9 @@ jobs:
         uses: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4
         with:
           image-ref: localhost/bunny-live:latest
-          iso-dest: BunnyOS-deck-bazzite.iso
+          # Absolute: the action moves the ISO relative to its own directory
+          # when this is a bare filename, and the upload would not find it.
+          iso-dest: ${{ github.workspace }}/BunnyOS-deck-bazzite.iso
 
       - name: Checksum
         id: checksum
@@ -166,68 +168,80 @@ jobs:
           echo "iso=${iso}" >> "$GITHUB_OUTPUT"
           ls -lh "${iso}"
 
+      # Best effort: a 7 GB artefact is close to the limit and the release below
+      # is the delivery path.  A failed upload must not fail the run.
       - name: Upload ISO artefact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: BunnyOS-deck-bazzite-${{ github.run_number }}
           path: |
             BunnyOS-deck-bazzite.iso
             BunnyOS-deck-bazzite.iso.sha256
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 0
 
-      - name: Build log on failure
-        if: failure()
-        run: sudo journalctl -u podman --no-pager | tail -200 || true
-
-  release:
-    name: publish the Bazzite ISO
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: BunnyOS-deck-bazzite-${{ github.run_number }}
-          path: dist
-
-      - name: Prepare assets
+      - name: Split the ISO for the release
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
-          iso="$(find dist -maxdepth 1 -name '*.iso' -print -quit)"
-          test -n "${iso}"
-          size="$(stat -c%s "${iso}")"
-          if [ "${size}" -gt 2000000000 ]; then
-            base="$(basename "${iso}")"
-            ( cd dist \
-              && split -b 1900M -d --numeric-suffixes=1 --suffix-length=2 \
-                   --additional-suffix=.part "${base}" "${base}." \
-              && rm -f "${base}" )
-            note=dist/READ-ME-FIRST.txt
-            echo "Bunny OS on Bazzite - ${base}" > "${note}"
-            echo "" >> "${note}"
-            echo "The image is larger than GitHub's 2 GiB asset limit, so it ships" >> "${note}"
-            echo "as ordered parts. Join them, check the checksum, then flash." >> "${note}"
-            echo "" >> "${note}"
-            echo "  Windows:      copy /b ${base}.01.part+${base}.02.part ${base}" >> "${note}"
-            echo "  Linux/macOS:  cat ${base}.??.part > ${base}" >> "${note}"
-            echo "  Flash:        Rufus - ISO Image mode, or dd if=${base} of=/dev/sdX bs=4M" >> "${note}"
-            echo "" >> "${note}"
-            echo "On the Steam Deck hold Vol- while powering on to boot the USB device." >> "${note}"
-          fi
+          iso="${{ steps.iso.outputs.iso-dest }}"
+          test -s "${iso}"
+          rm -rf dist
+          mkdir -p dist
+          cp "${iso}.sha256" dist/
+          size="$(stat -c %s "${iso}")"
+          base="$(basename "${iso}")"
+          : > dist/READ-ME-FIRST.txt
+          {
+            echo "Bunny OS on Bazzite - ${base}"
+            echo
+            if [ "${size}" -gt 2000000000 ]; then
+              # GitHub refuses assets above 2 GiB, so the image ships as parts.
+              ( cd dist && split -b 1900M -d --numeric-suffixes=1 \
+                  --suffix-length=2 --additional-suffix=.part "${iso}" "${base}." )
+              join_cmd="$(cd dist && ls "${base}".*.part | paste -sd+ -)"
+              echo "This image is larger than GitHub's 2 GiB asset limit, so it"
+              echo "ships as ${join_cmd//+/ and } - join them in order first:"
+              echo
+              echo "  Windows:      copy /b ${join_cmd} ${base}"
+              echo "  Linux/macOS:  cat ${base}.??.part > ${base}"
+              echo
+              echo "Then check the checksum and flash ${base}:"
+            else
+              cp "${iso}" dist/
+              echo "Check the checksum, then flash ${base}:"
+            fi
+            echo
+            echo "  windows  Rufus -> ISO Image mode (not DD mode)"
+            echo "  linux    dd if=${base} of=/dev/sdX bs=4M status=progress"
+            echo
+            echo "On the Steam Deck: power off, hold Volume Down, press Power and"
+            echo "pick the USB device.  Secure Boot has to be off."
+            echo
+            echo "The installer runs from the stick.  Choose the internal drive,"
+            echo "reboot without the stick, and Bunny OS starts on first login."
+          } > dist/READ-ME-FIRST.txt
+          cat dist/READ-ME-FIRST.txt
           ls -lh dist
 
-      - name: Create the release
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          notes="Bunny OS on Bazzite (Steam Deck LCD). Boots the official Bazzite Deck image with the Bunny OS Control Panel and first-boot wizard layered on top."
-          gh release view "${TAG}" >/dev/null 2>&1 \
-            && gh release upload "${TAG}" dist/* --clobber \
-            || gh release create "${TAG}" dist/* --title "Bunny OS on Bazzite ${TAG#v}" \
-                 --notes "${notes}" --prerelease
+          notes="Bunny OS on Bazzite for the Steam Deck LCD. The medium installs the official Bazzite Deck image with the Bunny OS Control Panel, bridge and first-boot wizard layered on top. Read READ-ME-FIRST.txt before flashing."
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/* --clobber
+          else
+            gh release create "${TAG}" dist/* \
+              --title "Bunny OS on Bazzite ${TAG#v}" \
+              --notes "${notes}" --prerelease
+          fi
+
+      - name: Build log on failure
+        if: failure()

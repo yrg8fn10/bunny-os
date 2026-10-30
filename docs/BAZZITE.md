@@ -50,15 +50,18 @@ Control Panel.
 
 ## Installing the Bazzite image
 
-1. Download the ISO from the release page. If it ships as `.01.part`,
-   `.02.part`, join the parts first:
+1. Download the release assets. `READ-ME-FIRST.txt` in the release has the exact
+   file names. The image is about 7.3 GB, so GitHub's 2 GiB asset limit means it
+   ships as numbered parts - join all of them, in order, into one ISO:
 
    ```
    Right-click Start > Terminal, then in the folder with the parts:
-   copy /b BunnyOS-deck-bazzite.iso.01.part+BunnyOS-deck-bazzite.iso.02.part BunnyOS-deck-bazzite.iso
+   copy /b BunnyOS-deck-bazzite.iso.01.part+BunnyOS-deck-bazzite.iso.02.part+BunnyOS-deck-bazzite.iso.03.part+BunnyOS-deck-bazzite.iso.04.part BunnyOS-deck-bazzite.iso
    ```
 
-   Check the result against the `.sha256` file before flashing:
+   `READ-ME-FIRST.txt` prints the same command with the parts this build
+   actually produced. Check the result against the `.sha256` file before
+   flashing:
 
    ```
    certutil -hashfile BunnyOS-deck-bazzite.iso SHA256
@@ -144,7 +147,12 @@ The CI workflow `.github/workflows/build-bazzite-iso.yml` does the whole job:
    `bazzite:stable`, runs `live-iso.sh` to add the live root, Anaconda, the
    kickstart and the payload image in container storage;
 7. hands `bunny-live` to `ublue-os/titanoboa`, which writes the ISO;
-8. publishes it as a release asset for `v*-bazzite` tags.
+8. for a `v*-bazzite` tag, splits the ISO into 1.9 GB parts, writes
+   `READ-ME-FIRST.txt` and publishes everything as a prerelease.
+
+A manual run (`workflow_dispatch`) does steps 1-7 and keeps the ISO as a
+workflow artefact, which is convenient for testing but not for downloading -
+the release is the delivery path.
 
 Locally, with podman and about 60 GB free:
 

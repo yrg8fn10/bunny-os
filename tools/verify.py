@@ -954,8 +954,16 @@ def check_packaging(rep: Report) -> None:
             "Bazzite ISO workflow builds the live medium separately")
     rep.add("image-ref: localhost/bunny-live:latest" in workflow,
             "titanoboa builds the ISO from the live medium")
-    rep.add("split -b" in workflow,
+    rep.add("iso-dest: ${{ github.workspace }}" in workflow,
+            "titanoboa writes the ISO where the workflow looks for it")
+    rep.add("split -b" in workflow and ".part" in workflow,
             "Bazzite ISO workflow splits an ISO above the 2 GiB asset limit")
+    rep.add("READ-ME-FIRST.txt" in workflow,
+            "Bazzite ISO workflow ships join and flash instructions")
+    rep.add("gh release create" in workflow and "gh release upload" in workflow,
+            "Bazzite ISO workflow publishes the release itself")
+    rep.add("continue-on-error: true" in workflow,
+            "a failed artefact upload does not fail the ISO run")
     rep.add("v*-bazzite" in workflow,
             "Bazzite ISO workflow publishes on its own tag pattern")
 
