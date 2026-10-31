@@ -164,8 +164,11 @@ jobs:
           set -euo pipefail
           iso="${{ steps.iso.outputs.iso-dest }}"
           test -s "${iso}"
-          sha256sum "${iso}" | tee "${iso}.sha256"
           echo "iso=${iso}" >> "$GITHUB_OUTPUT"
+          # Bare file name in the checksum file: whoever downloads it does not
+          # have the runner's directory, and neither does `sha256sum -c`.
+          ( cd "$(dirname "${iso}")" \
+            && sha256sum "$(basename "${iso}")" | tee "$(basename "${iso}").sha256" )
           ls -lh "${iso}"
 
       # Best effort: a 7 GB artefact is close to the limit and the release below
@@ -191,6 +194,9 @@ jobs:
           rm -rf dist
           mkdir -p dist
           cp "${iso}.sha256" dist/
+          # Same tarball that went into the image, so an existing Bazzite can
+          # get the panel without reinstalling.
+          cp out/bunny-os-portable-*.tar.gz out/bunny-os-portable-*.tar.gz.sha256 dist/
           size="$(stat -c %s "${iso}")"
           base="$(basename "${iso}")"
           : > dist/READ-ME-FIRST.txt
@@ -201,27 +207,39 @@ jobs:
               # GitHub refuses assets above 2 GiB, so the image ships as parts.
               ( cd dist && split -b 1900M -d --numeric-suffixes=1 \
                   --suffix-length=2 --additional-suffix=.part "${iso}" "${base}." )
-              join_cmd="$(cd dist && ls "${base}".*.part | paste -sd+ -)"
+              mapfile -t parts < <(cd dist && ls "${base}".*.part)
+              join_cmd="$(IFS=+; echo "${parts[*]}")"
               echo "This image is larger than GitHub's 2 GiB asset limit, so it"
-              echo "ships as ${join_cmd//+/ and } - join them in order first:"
+              echo "ships as ${#parts[@]} parts.  Download all of them:"
               echo
-              echo "  Windows:      copy /b ${join_cmd} ${base}"
-              echo "  Linux/macOS:  cat ${base}.??.part > ${base}"
+              for part in "${parts[@]}"; do echo "    ${part}"; done
               echo
-              echo "Then check the checksum and flash ${base}:"
+              echo "Then join them, in order, into ${base}:"
+              echo
+              echo "    windows      copy /b ${join_cmd} ${base}"
+              echo "    linux/macos  cat ${base}.??.part > ${base}"
+              echo
+              echo "Check the result against ${base}.sha256, then flash it:"
             else
               cp "${iso}" dist/
-              echo "Check the checksum, then flash ${base}:"
+              echo "Check the result against ${base}.sha256, then flash it:"
             fi
             echo
-            echo "  windows  Rufus -> ISO Image mode (not DD mode)"
-            echo "  linux    dd if=${base} of=/dev/sdX bs=4M status=progress"
+            echo "    windows      Rufus -> ISO Image mode (not DD mode)"
+            echo "    linux        dd if=${base} of=/dev/sdX bs=4M status=progress"
             echo
             echo "On the Steam Deck: power off, hold Volume Down, press Power and"
             echo "pick the USB device.  Secure Boot has to be off."
             echo
             echo "The installer runs from the stick.  Choose the internal drive,"
             echo "reboot without the stick, and Bunny OS starts on first login."
+            echo
+            echo "Already running Bazzite and just want the panel?  The portable"
+            echo "tarball installs Bunny OS into an existing system without"
+            echo "touching the bootloader, the kernel or your account:"
+            echo
+            echo "    tar xzf bunny-os-portable-*.tar.gz -C /tmp"
+            echo "    sudo /tmp/bunny-os-portable-*/install.sh"
           } > dist/READ-ME-FIRST.txt
           cat dist/READ-ME-FIRST.txt
           ls -lh dist

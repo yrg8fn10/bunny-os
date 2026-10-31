@@ -32,6 +32,9 @@ upstream behaviour.
 > verification as the Arch ISO, but it has not been installed on physical
 > hardware by this project. Treat the checklist at the end of this page as
 > something you verify.
+>
+> **Latest build:** [`v0.2.0-beta.5-bazzite`](https://github.com/yrg8fn10/bunny-os/releases/tag/v0.2.0-beta.5-bazzite)
+> - 7.3 GB, shipped as four `.part` files plus `READ-ME-FIRST.txt`.
 
 ## Which image should I use?
 
@@ -110,11 +113,12 @@ real gamepad events, so a paired controller works too.
 ## Portable install (no new image)
 
 If the Deck already runs Bazzite or SteamOS and you do not want to reinstall,
-the same payload is available as a tarball:
+the same payload is available as a tarball, and every Bazzite release page
+attaches it:
 
 ```
-tar -xzf bunny-os-portable-<version>.tar.gz
-cd bunny-os-portable-<version>
+tar -xzf bunny-os-portable-0.2.0.tar.gz
+cd bunny-os-portable-0.2.0
 sudo ./install.sh
 ```
 

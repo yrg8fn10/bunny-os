@@ -960,6 +960,10 @@ def check_packaging(rep: Report) -> None:
             "Bazzite ISO workflow splits an ISO above the 2 GiB asset limit")
     rep.add("READ-ME-FIRST.txt" in workflow,
             "Bazzite ISO workflow ships join and flash instructions")
+    rep.add('sha256sum "$(basename "${iso}")"' in workflow,
+            "the published checksum names the ISO, not the runner path")
+    rep.add("out/bunny-os-portable-*.tar.gz" in workflow,
+            "the release also offers the portable tarball")
     rep.add("gh release create" in workflow and "gh release upload" in workflow,
             "Bazzite ISO workflow publishes the release itself")
     rep.add("continue-on-error: true" in workflow,
