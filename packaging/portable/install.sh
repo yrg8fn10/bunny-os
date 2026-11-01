@@ -93,10 +93,11 @@ fi
 OS_ID="unknown"
 OS_NAME="this system"
 if [[ -r /etc/os-release ]]; then
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  OS_ID="${ID:-unknown}"
-  OS_NAME="${PRETTY_NAME:-${NAME:-this system}}"
+  # Source os-release in a subshell: it sets VERSION (Debian's "13 (trixie)",
+  # Ubuntu's "24.04 LTS (...)" and so on), which must not clobber the payload
+  # version read above or build-info.json reports the wrong release.
+  OS_ID="$( . /etc/os-release 2>/dev/null; printf '%s' "${ID:-unknown}" )"
+  OS_NAME="$( . /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-${NAME:-this system}}" )"
 fi
 info "host     : ${OS_NAME}"
 
