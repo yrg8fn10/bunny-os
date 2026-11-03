@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bun Bun OS</title>
+<meta name="description" content="A cozy sci-fi operating system for handhelds, built on Bazzite.">
+<style>
+:root{--cream:#FFF7EC;--ink:#2B2E4A}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--cream);color:var(--ink);line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding:2rem 1.25rem 4rem}
+header{padding:2.5rem 0 1.5rem;text-align:center}
+h1{font-size:2.6rem;margin:.2em 0;background:linear-gradient(90deg,#F7A8C4,#8FC7F0);-webkit-background-clip:text;background-clip:text;color:transparent}
+.tagline{font-size:1.15rem;color:#5a5f8a;margin:.3em 0}
+.cn{color:#b06fa8;font-size:1.05rem;margin-top:.4rem}
+.badges{margin-top:1.2rem}
+.badge{display:inline-block;margin:.25rem;padding:.35rem .8rem;border-radius:999px;background:#fff;border:1px solid #e8ded2;font-size:.85rem}
+.btn{display:inline-block;margin:.5rem .4rem 0;padding:.75rem 1.4rem;border-radius:999px;background:var(--ink);color:var(--cream);text-decoration:none;font-weight:600}
+.btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--ink)}
+h2{margin-top:2.4rem;font-size:1.35rem}
+.card{background:#fff;border:1px solid #e8ded2;border-radius:16px;padding:1rem 1.2rem;margin:.7rem 0}
+ul{margin:.4rem 0;padding-left:1.2rem}
+a{color:#7a5cc4}
+footer{margin-top:3rem;text-align:center;color:#8a8fae;font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>Bun Bun OS</h1>
+<p class="tagline">A cozy sci-fi operating system for handhelds. I'm waiting for you. Let's choose a game!</p>
+<p class="cn">嗨！我是 Bun Bun。你准备好了吗？我们一起选个游戏吧！</p>
+<div class="badges"><span class="badge">Bazzite-based</span><span class="badge">Steam Deck native</span><span class="badge">AMD + NVIDIA ISOs</span><span class="badge">CN / EN voice</span></div>
+<a class="btn" href="https://github.com/yrg8fn10/bunny-os/releases">Download the ISO</a>
+<a class="btn ghost" href="https://github.com/yrg8fn10/bunny-os">View source</a>
+</header>
+<h2>What is Bun Bun OS?</h2>
+<p>A handheld-first operating system built on Bazzite, wrapped around a warm pastel shell and a bilingual AI companion named Bun Bun. It boots straight into a game console experience, greets you when you wake up, and keeps a little dark-pocket magic just below the surface.</p>
+<h2>The shell, in layers</h2>
+<div class="card"><b>Layer A, look and feel.</b> Pastel themes for the boot splash and the desktop around stock Steam. Nothing is patched; the base system stays untouched.</div>
+<div class="card"><b>Layer B, the session.</b> Bun Bun's d-pad overlays and the companion call button. Works even when a Steam update outpaces the theme.</div>
+<div class="card"><b>Layer C, Big Picture.</b> Decky Loader sits inside Game Mode so Bun Bun really lives there: a CSS theme plus a d-pad shelf plugin.</div>
+<h2>Status</h2>
+<div class="card">Early days, v0.1 alpha. ISO builds are running now; when one goes green it lands on the <a href="https://github.com/yrg8fn10/bunny-os/releases">Releases</a> tab with a direct download link. Every install is checked by the bunny-verify hooks.</div>
+<h2>Links</h2>
+<ul>
+<li><a href="https://github.com/yrg8fn10/bunny-os">GitHub repository</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases">Releases and ISO downloads</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/blob/main/docs/SHELL.md">Shell design docs</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/blob/main/BUILD.md">Build guide</a></li>
+</ul>
+<footer>Made with love by OSAGON Research. Bun Bun OS is not affiliated with Valve.</footer>
+</div>
+</body>
+</html>
