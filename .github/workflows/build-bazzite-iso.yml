@@ -225,8 +225,8 @@ jobs:
         with:
           name: ${{ env.ISO_NAME }}-${{ github.run_number }}
           path: |
-            ${{ env.ISO_NAME }}
-            ${{ env.ISO_NAME }}.sha256
+            ${{ steps.iso.outputs.iso-dest }}
+            ${{ steps.iso.outputs.iso-dest }}.sha256
           if-no-files-found: warn
           retention-days: 14
           compression-level: 0
