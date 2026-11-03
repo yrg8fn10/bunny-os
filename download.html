@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download Bun Bun OS</title>
+<style>
+:root{--cream:#FFF7EC;--ink:#2B2E4A}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--cream);color:var(--ink);line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding:2rem 1.25rem 4rem}
+header{padding:1.5rem 0 1rem;text-align:center}
+h1{font-size:2.2rem;margin:.2em 0;background:linear-gradient(90deg,#F7A8C4,#8FC7F0);-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:#5a5f8a}
+.card{background:#fff;border:1px solid #e8ded2;border-radius:16px;padding:1.1rem 1.25rem;margin:1rem 0}
+h2{margin:.1em 0 .3em;font-size:1.3rem}
+ul{margin:.4rem 0;padding-left:1.2rem}
+li{margin:.15rem 0}
+code{background:#f4eee4;border-radius:8px;padding:.1rem .4rem;font-size:.9rem;display:block;white-space:pre-wrap;word-break:break-all;margin:.4rem 0}
+.note{color:#8a6d3b;font-size:.9rem}
+a{color:#7a5cc4}
+.btn{display:inline-block;margin:.6rem .4rem 0;padding:.7rem 1.3rem;border-radius:999px;background:var(--ink);color:var(--cream);text-decoration:none;font-weight:600}
+.btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--ink)}
+footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+<h1>Download Bun Bun OS</h1>
+<p class="sub">Current release: v0.2.0-beta.6-bazzite &middot; the first release with the Bun Bun fix built in.</p>
+</header>
+
+<div class="card">
+<h2>Steam Deck LCD ISO (full image)</h2>
+<p>BunBunOS-deck-lcd-0.2.0.iso, about 7.2 GB total. It ships as 4 parts; grab all four, join them in order, then check the checksum.</p>
+<ul>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunBunOS-deck-lcd-0.2.0.iso.01.part">Part 1</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunBunOS-deck-lcd-0.2.0.iso.02.part">Part 2</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunBunOS-deck-lcd-0.2.0.iso.03.part">Part 3</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunBunOS-deck-lcd-0.2.0.iso.04.part">Part 4</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunBunOS-deck-lcd-0.2.0.iso.sha256">Checksum (.sha256)</a></li>
+</ul>
+<p>Join the parts:</p>
+<code>windows    copy /b BunBunOS-deck-lcd-0.2.0.iso.01.part+BunBunOS-deck-lcd-0.2.0.iso.02.part+BunBunOS-deck-lcd-0.2.0.iso.03.part+BunBunOS-deck-lcd-0.2.0.iso.04.part BunBunOS-deck-lcd-0.2.0.iso</code>
+<code>linux/mac  cat BunBunOS-deck-lcd-0.2.0.iso.??.part &gt; BunBunOS-deck-lcd-0.2.0.iso</code>
+<p>Flash it: Rufus in ISO Image mode (not DD mode) on Windows, or <code>dd</code> on Linux. On the Deck: power off, hold Volume Down, press Power, pick the USB device. Secure Boot off.</p>
+</div>
+
+<div class="card">
+<h2>Deck installer ISO (smaller)</h2>
+<p>BunnyOS-deck-installer.iso, about 2.7 GB total, in 2 parts.</p>
+<ul>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunnyOS-deck-installer.iso.01.part">Part 1</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunnyOS-deck-installer.iso.02.part">Part 2</a></li>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/BunnyOS-deck-installer.iso.sha256">Checksum (.sha256)</a></li>
+</ul>
+<code>windows    copy /b BunnyOS-deck-installer.iso.01.part+BunnyOS-deck-installer.iso.02.part BunnyOS-deck-installer.iso</code>
+<code>linux/mac  cat BunnyOS-deck-installer.iso.??.part &gt; BunnyOS-deck-installer.iso</code>
+</div>
+
+<div class="card">
+<h2>Portable panel (no parts, one file)</h2>
+<p>Already running Bazzite? This small tarball installs the Bun Bun panel into your existing system without touching the bootloader, kernel or account.</p>
+<ul>
+<li><a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/bunny-os-portable-0.2.0.tar.gz">bunny-os-portable-0.2.0.tar.gz</a> (+ <a href="https://github.com/yrg8fn10/bunny-os/releases/download/v0.2.0-beta.6-bazzite/bunny-os-portable-0.2.0.tar.gz.sha256">checksum</a>)</li>
+</ul>
+<code>tar xzf bunny-os-portable-*.tar.gz -C /tmp
+sudo /tmp/bunny-os-portable-*/install.sh</code>
+</div>
+
+<div class="card">
+<h2>Why parts?</h2>
+<p class="note">Free hosting caps any single file at 2 GB, and a full OS image is bigger than that. Every host on a budget has the same rule, so the ISO ships as parts that fuse back into one file with a single command. The checksum proves the result is intact.</p>
+</div>
+
+<p><a class="btn" href="https://github.com/yrg8fn10/bunny-os/releases/tag/v0.2.0-beta.6-bazzite">All files on the release page</a>
+<a class="btn ghost" href="/">Back to the main page</a></p>
+<footer>Made with love by OSAGON Research. Bun Bun OS is not affiliated with Valve.</footer>
+</div>
+</body>
+</html>
