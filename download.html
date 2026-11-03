@@ -22,6 +22,14 @@ a{color:#7a5cc4}
 .btn{display:inline-block;margin:.6rem .4rem 0;padding:.7rem 1.3rem;border-radius:999px;background:var(--ink);color:var(--cream);text-decoration:none;font-weight:600}
 .btn.ghost{background:#fff;color:var(--ink);border:1.5px solid var(--ink)}
 footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
+.pick-overlay{position:fixed;inset:0;background:rgba(43,46,74,.55);display:flex;align-items:center;justify-content:center;padding:1rem;z-index:50}
+.pick-box{background:#fff;border-radius:20px;max-width:520px;width:100%;padding:1.5rem;box-shadow:0 12px 40px rgba(43,46,74,.25);text-align:center}
+.pick-box h2{margin-top:0}
+button.pick{display:block;width:100%;margin:.5rem 0;padding:.85rem 1rem;border-radius:14px;border:1.5px solid var(--ink);background:#fff;color:var(--ink);font-weight:600;font-size:1rem;cursor:pointer}
+button.pick:disabled{border-color:#d8cfc2;color:#a8a396;cursor:not-allowed;background:#faf6ef;font-weight:500}
+button.pick.ready{background:var(--ink);color:var(--cream)}
+button.close{background:none;border:none;color:#8a8fae;text-decoration:underline;cursor:pointer;margin-top:.4rem;font-size:.9rem}
+button.btn{cursor:pointer;border:none;font:inherit}
 </style>
 </head>
 <body>
@@ -29,6 +37,7 @@ footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
 <header>
 <h1>Download Bun Bun OS</h1>
 <p class="sub">Current release: v0.2.0-beta.6-bazzite &middot; the first release with the Bun Bun fix built in.</p>
+<p style="text-align:center"><button class="btn js-pick" type="button">Get Bun Bun OS</button></p>
 </header>
 
 <div class="card">
@@ -43,7 +52,7 @@ footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
 <p class="note">Not sure which you have? Steam Deck LCD and OLED look almost identical; check Settings, System, Model. Handhelds with AMD chips (most ROG Ally and Legion Go models) take the AMD image; ones with an NVIDIA RTX chip take the NVIDIA image.</p>
 </div>
 
-<div class="card">
+<div class="card" id="deck-lcd">
 <h2>Steam Deck LCD ISO (full image)</h2>
 <p>BunBunOS-deck-lcd-0.2.0.iso, about 7.2 GB total. It ships as 4 parts; grab all four, join them in order, then check the checksum.</p>
 <ul>
@@ -59,7 +68,7 @@ footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
 <p>Flash it: Rufus in ISO Image mode (not DD mode) on Windows, or <code>dd</code> on Linux. On the Deck: power off, hold Volume Down, press Power, pick the USB device. Secure Boot off.</p>
 </div>
 
-<div class="card">
+<div class="card" id="installer">
 <h2>Deck installer ISO (smaller)</h2>
 <p>BunnyOS-deck-installer.iso, about 2.7 GB total, in 2 parts.</p>
 <ul>
@@ -71,7 +80,7 @@ footer{margin-top:2.5rem;text-align:center;color:#8a8fae;font-size:.85rem}
 <code>linux/mac  cat BunnyOS-deck-installer.iso.??.part &gt; BunnyOS-deck-installer.iso</code>
 </div>
 
-<div class="card">
+<div class="card" id="portable">
 <h2>Portable panel (no parts, one file)</h2>
 <p>Already running Bazzite? This small tarball installs the Bun Bun panel into your existing system without touching the bootloader, kernel or account.</p>
 <ul>
@@ -93,7 +102,34 @@ sudo /tmp/bunny-os-portable-*/install.sh</code>
 <p>This is a prerelease, so you are exactly the kind of tester we want. If something breaks, <a href="https://github.com/yrg8fn10/bunny-os/issues">open an issue on GitHub</a> and tell us what happened: what hardware, what step, what you saw. That report shapes the next release.</p>
 </div>
 
-<footer>Made with love by OSAGON Research. Bun Bun OS is not affiliated with Valve.</footer>
+<div id="picker" class="pick-overlay" hidden>
+<div class="pick-box">
+<h2>Which machine are you downloading for?</h2>
+<button class="pick ready" type="button" data-goto="deck-lcd">Steam Deck LCD &mdash; ready today</button>
+<button class="pick" type="button" disabled>Steam Deck OLED &mdash; in build today</button>
+<button class="pick" type="button" disabled>AMD handheld or desktop PC &mdash; in build today</button>
+<button class="pick" type="button" disabled>NVIDIA RTX handheld or PC &mdash; building right now</button>
+<p class="note">AMD handhelds: ROG Ally, Legion Go, Acer Nitro Blaze and friends. Not sure which you have? On a Deck, check Settings, System, Model; on other machines, the chip name is on the box.</p>
+<button class="close" type="button">Never mind</button>
+</div>
+</div>
+<script>
+(function(){
+  var ov = document.getElementById('picker');
+  document.querySelectorAll('.js-pick').forEach(function(b){
+    b.addEventListener('click', function(){ ov.hidden = false; });
+  });
+  ov.querySelectorAll('[data-goto]').forEach(function(b){
+    b.addEventListener('click', function(){
+      ov.hidden = true;
+      var t = document.getElementById(b.getAttribute('data-goto'));
+      if (t) t.scrollIntoView({behavior:'smooth'});
+    });
+  });
+  ov.querySelector('.close').addEventListener('click', function(){ ov.hidden = true; });
+})();
+</script>
+<footer> by OSAGON Research. Bun Bun OS is not affiliated with Valve.</footer>
 </div>
 </body>
 </html>
