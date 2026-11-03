@@ -232,6 +232,47 @@ else
   warn "skipping the setup service; run bunny-os-setup by hand for the wizard"
 fi
 
+# --- 3b. the environment check service ---------------------------------------
+# The spec's "local server environment check": on every boot, before the
+# first-boot wizard, verify that this node can serve Bun Bun and write the
+# report the Control Panel shows (/var/lib/bunny/node-check.json).  The check
+# never blocks the boot; a failure leaves a VERIFY-FAILED marker instead.
+if (( SERVICE )); then
+  step "Installing bunny-verify.service"
+  put "${DESTDIR}${UNIT_DIR}/bunny-verify.service" <<EOF
+[Unit]
+Description=Bun Bun OS local server environment check
+Documentation=file://${PREFIX}/share/doc/bunny-os/BAZZITE.md
+After=local-fs.target
+Before=bunny-setupd.service multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=${BIN}/bunny-verify --lib ${LIB} --state ${STATE_DIR}
+RemainAfterExit=yes
+StateDirectory=bunny
+StateDirectoryMode=0755
+StandardOutput=journal+console
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "${DESTDIR}${UNIT_DIR}/bunny-verify.service" 2>/dev/null || true
+  if [[ -n "${BUNNY_INSTALL_IMAGE:-}" ]]; then
+    # Image build: enable only; there is no PID 1 to run it yet.
+    run systemctl enable bunny-verify.service
+  elif [[ -z "${DESTDIR}" ]]; then
+    run systemctl daemon-reload
+    run systemctl enable bunny-verify.service
+    if (( DRY_RUN == 0 )); then
+      # First check right now, so the panel has a report before any reboot.
+      "${BIN}/bunny-verify" --lib "${LIB}" --state "${STATE_DIR}" || true
+    fi
+  else
+    info "[destdir] unit installed, systemctl not run"
+  fi
+fi
+
 # --- 4. menu entries ---------------------------------------------------------
 step "Installing menu entries"
 put "${DESTDIR}${APPS}/bunny-os.desktop" <<EOF

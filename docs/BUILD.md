@@ -310,3 +310,44 @@ PYTHON=/path/to/python scripts/ship-release.sh   # if python is not on PATH
 
 Verification runs first on purpose: a tag is published to testers, so tagging an
 unverified tree is the one mistake the script must not allow.
+
+## 11. Bazzite ISO build targets
+
+The Bazzite workflow (`build-bazzite-iso.yml`) builds one ISO per **target**.
+Targets are defined in `packaging/bazzite/targets.json`, which maps each
+target to the upstream Bazzite image that receives the Bun Bun OS layer, the
+live installer image, the ISO volume label and a release description. The
+workflow resolves the target at run time, so a variant never drifts from its
+upstream ref by accident.
+
+| Target | Upstream payload image | For |
+|--------|------------------------|-----|
+| `deck-lcd` | `ghcr.io/ublue-os/bazzite-deck:stable` | Steam Deck LCD (the default) |
+| `deck-oled` | `ghcr.io/ublue-os/bazzite-deck:stable` | Steam Deck OLED (upstream builds one Deck image for both models) |
+| `handheld-amd` | `ghcr.io/ublue-os/bazzite-deck:stable` | AMD handhelds and handheld PCs (ROG Ally, Legion Go class) |
+| `handheld-nvidia` | `ghcr.io/ublue-os/bazzite-nvidia:stable` | NVIDIA RTX handhelds and PCs |
+
+Two of the four targets share the Deck image on purpose: Bazzite ships a
+single Deck image covering LCD and OLED, and recommends it for Deck-class
+handhelds generally. What differs is the ISO identity and the release
+description. `handheld-nvidia` is the one variant that switches base image,
+because it needs the NVIDIA driver stack; it should be verified on hardware
+before a stable release, like every other non-Deck target.
+
+Build one target:
+
+```
+gh workflow run build-bazzite-iso.yml -f target=handheld-nvidia
+```
+
+Omit `-f target` and it builds `deck-lcd`, which is also what the
+`v*-bazzite` tag trigger builds. Every run names its ISO
+`BunBunOS-<target>-<version>.iso`, uploads it with its sha256 as an artefact,
+and on a version tag publishes all assets to the release.
+
+The environment check (`bunny-verify.service`) is part of every variant: the
+portable installer enables it, it runs once on every boot before the
+first-boot wizard, verifies the node (interpreter, browser, panel payload,
+build metadata, state directory, first-boot service), writes
+`/var/lib/bunny/node-check.json` and never blocks the boot. A failure leaves
+a `VERIFY-FAILED` marker for the Control Panel instead.

@@ -38,6 +38,9 @@ if [[ -z "${DESTDIR}" && "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+if [[ -z "${DESTDIR}" ]] && systemctl list-unit-files bunny-verify.service >/dev/null 2>&1; then
+  systemctl disable --now bunny-verify.service 2>/dev/null || true
+fi
 if [[ -z "${DESTDIR}" ]] && systemctl list-unit-files bunny-setupd.service >/dev/null 2>&1; then
   systemctl disable --now bunny-setupd.service 2>/dev/null || true
 fi
@@ -45,9 +48,11 @@ fi
 for file in "${DESTDIR}${BIN}/bunny-panel" \
             "${DESTDIR}${BIN}/bunny-panel-bridge" \
             "${DESTDIR}${BIN}/bunny-setupd" \
+            "${DESTDIR}${BIN}/bunny-verify" \
             "${DESTDIR}${BIN}/bunny-os" \
             "${DESTDIR}${BIN}/bunny-os-setup" \
             "${DESTDIR}${PREFIX}/lib/systemd/system/bunny-setupd.service" \
+            "${DESTDIR}${PREFIX}/lib/systemd/system/bunny-verify.service" \
             "${DESTDIR}${APPS}/bunny-os.desktop" \
             "${DESTDIR}${APPS}/bunny-os-setup.desktop" \
             "${DESTDIR}/etc/xdg/autostart/bunny-os-setup.desktop" \

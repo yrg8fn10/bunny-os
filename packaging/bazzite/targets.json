@@ -1,0 +1,31 @@
+{
+  "_comment": "Build targets for the Bun Bun OS Bazzite ISO pipeline. Each target maps to the upstream Bazzite image that gets the Bun Bun OS layer, the live installer image, and the ISO identity. The workflow resolves a target through this file, so a variant never drifts from its upstream ref by accident.",
+  "deck-lcd": {
+    "label": "Steam Deck LCD",
+    "base_image": "ghcr.io/ublue-os/bazzite-deck:stable",
+    "live_image": "ghcr.io/ublue-os/bazzite:stable",
+    "iso_label": "BUNBUN-DLCD",
+    "description": "Steam Deck LCD: the official Bazzite Deck image with the Bun Bun OS Control Panel, bridge and first-boot wizard layered on top."
+  },
+  "deck-oled": {
+    "label": "Steam Deck OLED",
+    "base_image": "ghcr.io/ublue-os/bazzite-deck:stable",
+    "live_image": "ghcr.io/ublue-os/bazzite:stable",
+    "iso_label": "BUNBUN-DOLED",
+    "description": "Steam Deck OLED: the same Bazzite Deck image, which upstream builds for both Deck models; firmware support is inherited from Bazzite and should be verified on OLED hardware before a stable release."
+  },
+  "handheld-amd": {
+    "label": "AMD handheld (ROG Ally, Legion Go class)",
+    "base_image": "ghcr.io/ublue-os/bazzite-deck:stable",
+    "live_image": "ghcr.io/ublue-os/bazzite:stable",
+    "iso_label": "BUNBUN-HAMD",
+    "description": "AMD handhelds and handheld PCs (ROG Ally, Legion Go class): the Bazzite Deck image, which upstream targets at Deck-class handhelds generally."
+  },
+  "handheld-nvidia": {
+    "label": "NVIDIA RTX handheld / PC",
+    "base_image": "ghcr.io/ublue-os/bazzite-nvidia:stable",
+    "live_image": "ghcr.io/ublue-os/bazzite-nvidia:stable",
+    "iso_label": "BUNBUN-HNV",
+    "description": "NVIDIA RTX handhelds and PCs: Bazzite's NVIDIA image variant carries the RTX driver stack; verify on hardware before a stable release."
+  }
+}

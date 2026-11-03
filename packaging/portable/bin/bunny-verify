@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-verify - the Bun Bun OS local server environment check.
+#
+#  Runs once on boot (systemd bunny-verify.service) and on demand, and
+#  verifies that the "node" this OS install runs on can actually serve Bun
+#  Bun: the interpreter, the browser the panel needs, the panel payload, the
+#  state directory and the first-boot service.
+#
+#  Contract, on purpose:
+#    * It NEVER blocks the boot.  A failed check writes its report, leaves a
+#      VERIFY-FAILED marker for the Control Panel, and exits 0.  The machine
+#      always comes up; Bun Bun's welcome flow is what waits for a pass.
+#    * The report lives in /var/lib/bunny/node-check.json so the panel and
+#      the wizard can show exactly what is missing instead of a vague error.
+# =============================================================================
+set -uo pipefail
+
+PREFIX="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+LIB="${PREFIX}/lib/bunny"
+STATE="/var/lib/bunny"
+UNIT_DIR=""
+PROBE_PORT="${BUNNY_SETUP_PORT:-8430}"
+PRINT_ONLY=0
+
+usage() {
+  sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --lib)    LIB="$2"; shift 2 ;;
+    --state)  STATE="$2"; shift 2 ;;
+    --prefix) PREFIX="$2"; shift 2 ;;
+    --port)   PROBE_PORT="$2"; shift 2 ;;
+    --print)  PRINT_ONLY=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+# The unit lands next to the binaries on a portable install, and in
+# /usr/lib/systemd/system inside the image build; accept both.
+UNIT_DIRS=("${PREFIX}/lib/systemd/system" "/usr/lib/systemd/system" "/usr/local/lib/systemd/system")
+
+CHECKS=()          # entries: "name|ok(1/0)|detail"
+FAIL=0
+
+check() { # name ok(1/0) detail
+  CHECKS+=("$1|$2|$3")
+  if [[ "$2" != "1" ]]; then FAIL=1; fi
+}
+
+# --- 1. interpreter -----------------------------------------------------------
+if command -v python3 >/dev/null 2>&1; then
+  check "python3" 1 "$(python3 --version 2>&1)"
+else
+  check "python3" 0 "python3 is not installed (Bun Bun's runtime needs it)"
+fi
+
+# --- 2. the browser the panel runs in ----------------------------------------
+BROWSER=""
+for candidate in chromium chromium-browser google-chrome-stable google-chrome \
+                 brave-browser microsoft-edge-stable; do
+  if command -v "${candidate}" >/dev/null 2>&1; then BROWSER="${candidate}"; break; fi
+done
+if [[ -z "${BROWSER}" ]] && command -v flatpak >/dev/null 2>&1; then
+  for app in org.chromium.Chromium com.google.Chrome com.brave.Browser; do
+    if flatpak info "${app}" >/dev/null 2>&1; then BROWSER="flatpak ${app}"; break; fi
+  done
+fi
+if [[ -n "${BROWSER}" ]]; then
+  check "browser" 1 "${BROWSER}"
+else
+  check "browser" 0 "no Chromium-family browser found for the Control Panel"
+fi
+
+# --- 3. the panel payload -----------------------------------------------------
+for f in "${LIB}/ui/index.html" "${LIB}/ui/setup/index.html"; do
+  if [[ -f "${f}" ]]; then
+    check "panel:$(basename "$(dirname "${f}")")" 1 "${f}"
+  else
+    check "panel:$(basename "$(dirname "${f}")")" 0 "missing ${f}"
+  fi
+done
+
+# --- 4. build metadata --------------------------------------------------------
+if [[ -f "/etc/bunny/build-info.json" ]]; then
+  check "build-info" 1 "/etc/bunny/build-info.json"
+else
+  check "build-info" 0 "/etc/bunny/build-info.json is missing"
+fi
+
+# --- 5. the first-boot service unit -------------------------------------------
+UNIT_FOUND=""
+for d in "${UNIT_DIRS[@]}"; do
+  if [[ -f "${d}/bunny-setupd.service" ]]; then UNIT_FOUND="${d}/bunny-setupd.service"; break; fi
+done
+if [[ -n "${UNIT_FOUND}" ]]; then
+  check "setupd-unit" 1 "${UNIT_FOUND}"
+else
+  check "setupd-unit" 0 "bunny-setupd.service not found in any unit directory"
+fi
+
+# --- 6. state directory -------------------------------------------------------
+if [[ -d "${STATE}" && -w "${STATE}" ]]; then
+  check "state-dir" 1 "${STATE} is writable"
+else
+  check "state-dir" 0 "${STATE} missing or not writable"
+fi
+
+# --- 7. the local server, live probe (informational) --------------------------
+SERVER="not-running"
+if python3 - "$PROBE_PORT" <<'PYEOF' >/dev/null 2>&1
+import socket, sys
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2)
+s.close()
+PYEOF
+then
+  SERVER="responding"
+fi
+check "local-server" 1 "bunny-setupd local server: ${SERVER}"
+
+# --- 8. write the report ------------------------------------------------------
+STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+STATUS="pass"; (( FAIL )) && STATUS="fail"
+
+if (( PRINT_ONLY )); then
+  for c in "${CHECKS[@]}"; do IFS='|' read -r name ok detail <<<"$c"; printf '%s  %-14s %s\n' "$([[ $ok == 1 ]] && echo ok || echo FAIL)" "${name}" "${detail}"; done
+  printf 'status: %s\n' "${STATUS}"
+  exit 0
+fi
+
+JSON_CHECKS=""
+for c in "${CHECKS[@]}"; do
+  IFS='|' read -r name ok detail <<<"$c"
+  esc="$(printf '%s' "${detail}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  JSON_CHECKS+="${JSON_CHECKS:+,}{\"name\": \"${name}\", \"ok\": ${ok}, \"detail\": \"${esc}\"}"
+done
+cat > "${STATE}/node-check.json" <<JSONEOF
+{
+  "checked_at": "${STAMP}",
+  "status": "${STATUS}",
+  "checks": [${JSON_CHECKS}]
+}
+JSONEOF
+chmod 0644 "${STATE}/node-check.json" 2>/dev/null || true
+
+if (( FAIL )); then
+  touch "${STATE}/VERIFY-FAILED"
+  echo "bunny-verify: environment check FAILED, see ${STATE}/node-check.json" >&2
+  # Never block the boot: the panel shows the banner, the session continues.
+  exit 0
+fi
+rm -f "${STATE}/VERIFY-FAILED"
+echo "bunny-verify: environment check passed (${STAMP})"
+exit 0

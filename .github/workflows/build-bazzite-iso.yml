@@ -1,6 +1,9 @@
 name: build-bazzite-iso
 
-# Bunny OS on top of Bazzite, for the Steam Deck LCD.
+# Bun Bun OS on top of Bazzite: Steam Deck LCD and OLED, plus AMD and
+# NVIDIA handheld/PC ISO variants. The build target is resolved through
+# packaging/bazzite/targets.json, so every variant keeps its own pinned
+# upstream image.
 #
 # Bazzite's own ISO boots the *desktop* image and installs the *Deck* image
 # from container storage; booting the Deck image would start Gaming Mode, which
@@ -32,6 +35,10 @@ on:
         description: "ISO volume label"
         type: string
         default: BunnyOS-Live
+      target:
+        description: "Build target (see packaging/bazzite/targets.json)"
+        type: string
+        default: deck-lcd
   push:
     tags: ["v*-bazzite"]
 
@@ -39,10 +46,8 @@ permissions:
   contents: write
 
 env:
-  BASE_IMAGE: ${{ inputs.base_image || 'ghcr.io/ublue-os/bazzite-deck:stable' }}
-  LIVE_IMAGE: ${{ inputs.live_image || 'ghcr.io/ublue-os/bazzite:stable' }}
-  ISO_LABEL: ${{ inputs.iso_label || 'BunnyOS-Live' }}
-  IMAGE_REF: localhost/bunny-deck:latest
+  # Per-target images and ISO names are resolved by the "Resolve build
+  # target" step from packaging/bazzite/targets.json.
   # Pinned so a change upstream cannot silently alter the image under us.
   TITANOBOA_ACTION: ublue-os/titanoboa@5c457c3d0518bd17e754be0fd98a60d29d26abb4
 
@@ -100,6 +105,35 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Resolve build target
+        env:
+          IN_TARGET: ${{ inputs.target || 'deck-lcd' }}
+          IN_BASE: ${{ inputs.base_image }}
+          IN_LIVE: ${{ inputs.live_image }}
+          IN_LABEL: ${{ inputs.iso_label }}
+        run: |
+          set -euo pipefail
+          python3 - >> "$GITHUB_ENV" <<'PY'
+          import json, os
+          t = json.load(open("packaging/bazzite/targets.json"))
+          tid = os.environ["IN_TARGET"].strip()
+          if tid not in t:
+              raise SystemExit(f"unknown build target '{tid}'; choose one of: " + ", ".join(k for k in t if not k.startswith('_')))
+          d = t[tid]
+          version = open("VERSION").read().strip()
+          print(f"TARGET_ID={tid}")
+          print(f"TARGET_LABEL={d['label']}")
+          print(f"BASE_IMAGE={os.environ.get('IN_BASE') or d['base_image']}")
+          print(f"LIVE_IMAGE={os.environ.get('IN_LIVE') or d['live_image']}")
+          print(f"ISO_LABEL={os.environ.get('IN_LABEL') or d['iso_label']}")
+          print(f"IMAGE_REF=localhost/bunny-{tid}:latest")
+          print(f"ISO_NAME=BunBunOS-{tid}-{version}.iso")
+          print(f"ISO_DESC={d['description']}")
+          PY
+          echo "target : ${TARGET_ID} (${TARGET_LABEL})"
+          echo "payload: ${IMAGE_REF}"
+          echo "iso    : ${ISO_NAME} (label ${ISO_LABEL})"
+
       - name: Build the portable payload
         run: |
           set -euo pipefail
@@ -107,7 +141,7 @@ jobs:
           cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
           ls -lh packaging/bazzite/bunny-os-portable.tar.gz
 
-      - name: Build the Bunny OS Deck image
+      - name: Build the Bun Bun OS payload image
         run: |
           set -euo pipefail
           VERSION="$(cat VERSION)"
@@ -156,7 +190,7 @@ jobs:
           image-ref: localhost/bunny-live:latest
           # Absolute: the action moves the ISO relative to its own directory
           # when this is a bare filename, and the upload would not find it.
-          iso-dest: ${{ github.workspace }}/BunnyOS-deck-bazzite.iso
+          iso-dest: ${{ github.workspace }}/${{ env.ISO_NAME }}
 
       - name: Checksum
         id: checksum
@@ -177,10 +211,10 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: BunnyOS-deck-bazzite-${{ github.run_number }}
+          name: ${{ env.ISO_NAME }}-${{ github.run_number }}
           path: |
-            BunnyOS-deck-bazzite.iso
-            BunnyOS-deck-bazzite.iso.sha256
+            ${{ env.ISO_NAME }}
+            ${{ env.ISO_NAME }}.sha256
           if-no-files-found: warn
           retention-days: 14
           compression-level: 0
@@ -252,12 +286,12 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          notes="Bunny OS on Bazzite for the Steam Deck LCD. The medium installs the official Bazzite Deck image with the Bunny OS Control Panel, bridge and first-boot wizard layered on top. Read READ-ME-FIRST.txt before flashing."
+          notes="Bun Bun OS on Bazzite for the ${TARGET_LABEL} (${TARGET_ID}). The medium installs the Bazzite base image with the Bun Bun OS Control Panel, bridge and first-boot wizard layered on top. Read READ-ME-FIRST.txt before flashing."
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/* --clobber
           else
             gh release create "${TAG}" dist/* \
-              --title "Bunny OS on Bazzite ${TAG#v}" \
+              --title "Bun Bun OS on Bazzite ${TAG#v}" \
               --notes "${notes}" --prerelease
           fi
 
