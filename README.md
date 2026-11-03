@@ -1,5 +1,7 @@
 # Bunny OS
 
+Official site: https://yrg8fn10.github.io/bunny-os/ &middot; [Downloads](https://yrg8fn10.github.io/bunny-os/download.html)
+
 A controller-first, Arch-based gaming distribution with a SteamOS-shaped couch
 experience, a KDE Plasma desktop mode, and **Bun Bun** — a local AI co-op buddy
 who gives hints, cheers you on, and can join allowlisted lobbies with your
