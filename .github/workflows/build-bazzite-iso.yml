@@ -113,7 +113,11 @@ jobs:
           IN_LABEL: ${{ inputs.iso_label }}
         run: |
           set -euo pipefail
-          python3 - >> "$GITHUB_ENV" <<'PY'
+          # Write the resolved values to a temp file, append them to
+          # GITHUB_ENV for later steps, and print the summary from the file
+          # itself. GITHUB_ENV vars are NOT visible in the same step, so the
+          # summary must not reference them (bash set -u fails otherwise).
+          python3 - > /tmp/bunny-target.env <<'PY'
           import json, os
           t = json.load(open("packaging/bazzite/targets.json"))
           tid = os.environ["IN_TARGET"].strip()
@@ -130,9 +134,17 @@ jobs:
           print(f"ISO_NAME=BunBunOS-{tid}-{version}.iso")
           print(f"ISO_DESC={d['description']}")
           PY
-          echo "target : ${TARGET_ID} (${TARGET_LABEL})"
-          echo "payload: ${IMAGE_REF}"
-          echo "iso    : ${ISO_NAME} (label ${ISO_LABEL})"
+          cat /tmp/bunny-target.env >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          env = {}
+          for line in open("/tmp/bunny-target.env").read().splitlines():
+              if "=" in line:
+                  k, v = line.split("=", 1)
+                  env[k] = v
+          print(f"target : {env['TARGET_ID']} ({env['TARGET_LABEL']})")
+          print(f"payload: {env['IMAGE_REF']}")
+          print(f"iso    : {env['ISO_NAME']} (label {env['ISO_LABEL']})")
+          PY
 
       - name: Build the portable payload
         run: |
