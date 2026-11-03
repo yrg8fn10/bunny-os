@@ -47,6 +47,35 @@ in place of the stock desktop hand-off. Shipped behind
 owning the whole surface, which Layer C does. Not the default until it
 survives a full release cycle.
 
+## 2b. The Decky Loader route (real BPM skinning)
+
+Suggested by the owner, and it unlocks the layer we ruled out: BPM itself.
+Decky Loader injects plugins into Steam's Game Mode UI at runtime (it hooks
+the Steam client's web renderer). It is the community-standard tool, it is
+explicitly supported on Bazzite, and it makes two things possible:
+
+- `bunbun-bpm-theme` (CSS Loader theme): restyles Game Mode's Big Picture
+  surfaces with the Bun Bun tokens (palette, radius, fonts) instead of only
+  the desktop around Steam.
+- `bunny-shelf` (Decky plugin): the d-pad-navigable Bun Bun shelf and quick
+  actions live *inside* Game Mode rather than beside it.
+
+Payload integration:
+- install Decky Loader at build time from its upstream release into the
+  image's `/home` template, no network at first boot;
+- ship both packages with the image; enable the plugin by default on Deck
+  targets, optional elsewhere;
+- keep the Layer B KWin wrapper as the fallback: if a Steam client update
+  breaks the theme or plugin until their next update, `bunny-session` still
+  provides a usable Bun Bun surface.
+
+Caveats we design for:
+- Steam updates can invalidate theme selectors temporarily; CSS Loader
+  themes are updated by their maintainers after client updates, and our
+  verify hooks check the theme loaded, never assume it did.
+- Decky and CSS Loader are third-party open source: pinned upstream releases
+  only, no vendored forks, and the build records the exact version used.
+
 ## 3. D-pad-only navigation contract
 
 Layer B and C surfaces never require a pointer:
