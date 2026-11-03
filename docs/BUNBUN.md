@@ -24,7 +24,7 @@ so it can be reviewed and translated without touching code.
 | Name | Bun Bun |
 | Species | bunny |
 | Role | co-op buddy and hint giver |
-| Voice style | bright, gentle, kid-like; slightly slow; high pitch |
+| Voice style | bright, gentle, kid-like; slightly slow; high pitch; soft East-Asian-accented English, cute and kid-friendly |
 | Utterance cap | 180 characters (configurable) |
 | Default hint level | `gentle` |
 
@@ -80,6 +80,16 @@ so the panel can explain *why* Bun Bun stayed quiet.
 Game state is supplied by the watcher (Steam ACF files, Heroic/Legendary
 manifests, running processes) or by an explicit `POST /v1/state`. The agent does
 not read game memory and does not hook graphics APIs.
+
+### Bun Bun in your games
+
+* **Multiplayer:** she can hop into a co-op session as an AI buddy when the
+  player allows multiplayer for that session. She is never added to a real
+  friends list and always announces herself as an AI when joining
+  (`action/coop.py`); the join is consent-gated, never automatic.
+* **Single-player:** in games with no multiplayer at all (Subnautica, Below
+  Zero, and anything else), she watches and cheers from the sidelines - the
+  `sideline` line category - and never takes the controls unless asked.
 
 ## 3. Hint library
 

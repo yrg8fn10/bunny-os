@@ -36,6 +36,10 @@ class AgentConfig:
     local_only: bool = True
     memory_enabled: bool = True
     tts_backend: str = "auto"       # auto|piper|espeak|none
+    mic_enabled: bool = False       # never hot by default; see audio/mic.py
+    mic_push_to_talk: bool = True   # capture only inside an explicit window
+    mic_stt: str = "auto"           # auto|whisper|none (local only)
+    mic_device: str = ""            # PipeWire target; empty = default source
     piper_model: Path | None = None
     tick_seconds: float = 4.0
     max_utterance_chars: int = 180
@@ -93,6 +97,11 @@ def load_config(settings_file: Path | None = None,
         memory_enabled=_coerce_bool(pick("memory_enabled", cfg.memory_enabled),
                                     cfg.memory_enabled),
         tts_backend=str(pick("tts_backend", cfg.tts_backend)),
+        mic_enabled=_coerce_bool(pick("mic_enabled", cfg.mic_enabled), cfg.mic_enabled),
+        mic_push_to_talk=_coerce_bool(pick("mic_push_to_talk", cfg.mic_push_to_talk),
+                                      cfg.mic_push_to_talk),
+        mic_stt=str(pick("mic_stt", cfg.mic_stt)),
+        mic_device=str(pick("mic_device", cfg.mic_device)),
         max_utterance_chars=int(pick("max_utterance_chars", cfg.max_utterance_chars)),
     )
 
@@ -103,6 +112,8 @@ def load_config(settings_file: Path | None = None,
         cfg = replace(cfg, host=env["BUNBUN_HOST"])
     if "BUNBUN_DATA_DIR" in env:
         cfg = replace(cfg, data_dir=Path(env["BUNBUN_DATA_DIR"]))
+    if "BUNBUN_MIC_ENABLED" in env:
+        cfg = replace(cfg, mic_enabled=_coerce_bool(env["BUNBUN_MIC_ENABLED"], cfg.mic_enabled))
     if "BUNBUN_TTS" in env:
         cfg = replace(cfg, tts_backend=env["BUNBUN_TTS"])
     if "BUNBUN_PIPER_MODEL" in env:

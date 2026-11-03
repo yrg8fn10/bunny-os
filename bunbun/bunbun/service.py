@@ -43,6 +43,8 @@ from .mam import GameState, Kind, MAMEngine, PolicyEngine
 from .memory import Memory
 from .perception import GameWatcher
 from .persona import Persona
+from .audio.mic import MicCapture
+from .audio.router import AudioRouter
 from .tts import TTSPipeline
 
 LOG = logging.getLogger("bunbun")
@@ -88,6 +90,8 @@ class AgentService:
 
         self.watcher = GameWatcher(self.bus)
         self.coop = CoopAgent(self.bus)
+        self.mic = MicCapture(config)
+        self.router = AudioRouter()
 
         self._stop = threading.Event()
         self._events: queue.Queue = self.bus.subscribe(maxsize=256)
@@ -189,6 +193,8 @@ class AgentService:
                 "voice_available": self.tts.available,
                 "tts": self.tts.stats,
                 "input_enabled": self.input_client.enabled,
+                "mic_enabled": self.config.mic_enabled,
+                "mic_window_open": self.mic.window_open,
                 "local_only": True,
             },
             "engine": self.engine.status(),
@@ -205,6 +211,7 @@ class AgentService:
             "voice_available": self.tts.available,
             "memory": self.memory.stats(),
             "kill_switch": self._kill_switch(),
+            "mic_muted": self.mic.kill_switch_muted(),
         }
 
 
