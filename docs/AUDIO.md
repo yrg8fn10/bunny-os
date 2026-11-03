@@ -17,10 +17,20 @@ house rule intact: **the microphone is off by default and never runs hot.**
 
 1. `mic_enabled` in settings. Default **False**. The agent never enables it on
    its own; only the owner does, in the control panel or `settings.json`.
-2. An open listening window. Push-to-talk semantics: capture happens only
-   between an explicit open and close (button press / panel consent). No window,
-   no recording, even when gate 1 is open.
-3. The PipeWire source itself. `wpctl get-volume @DEFAULT_AUDIO_SOURCE@`
+2. Scope. Two modes, chosen in settings:
+
+   * `mic_push_to_talk: true` (default) - an explicit listening window, opened
+     and closed by the player. Nothing is recorded outside the window.
+   * `mic_push_to_talk: false` - **session listening, no button**: Bun Bun
+     listens only while a game session is active (the watcher drives
+     `set_session_active`). Never the desktop, never idle time.
+3. The privacy cooldown. In session mode the **privacy gate**
+   (`audio/privacy.py`) reviews every transcript locally: secrets, passwords,
+   card or phone numbers, addresses, birthdays. On a hit she mutes herself for
+   a cooldown, the clip is deleted untranscribed, and she only comes back for
+   game talk. Conservative by design, and best-effort - which is why it sits on
+   top of the other gates, never instead of them.
+4. The PipeWire source itself. `wpctl get-volume @DEFAULT_AUDIO_SOURCE@`
    reports the hardware kill switch: if it says `[MUTED]`, or the state cannot
    be read at all, capture refuses. **Unknown is treated as unavailable, never
    as available.**
@@ -57,7 +67,7 @@ text lands in the MAM engine as a player-speech event, same as game state.
 | Key | Default | Meaning |
 |---|---|---|
 | `mic_enabled` | `false` | master switch for capture |
-| `mic_push_to_talk` | `true` | capture only inside an explicit window |
+| `mic_push_to_talk` | `true` | `true`: explicit window only; `false`: session listening with the privacy gate |
 | `mic_stt` | `auto` | `auto` \| `whisper` \| `none` |
 | `mic_device` | empty | PipeWire target; empty = default source |
 
@@ -68,5 +78,4 @@ Environment: `BUNBUN_MIC_ENABLED=1` for development.
 - `bunbun/tests/test_audio.py`: default-off, window gate, kill switch outranks
   everything, unknown-means-unavailable, duck restores, router refuses cleanly.
 - Next steps (not in this commit): wiring `duck()`/`unduck()` around the TTS
-  pipeline's speak calls, and a push-to-talk button mapping in the d-pad
-  contract.
+  pipeline's speak calls, and `listen_once()` events feeding the MAM engine.

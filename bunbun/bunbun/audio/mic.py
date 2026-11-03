@@ -1,16 +1,21 @@
 """Consent-gated microphone capture (Deliverable 3).
 
-The microphone never runs hot. Every capture call passes three gates, in order:
+Ava's listening model, v2 (Nov 3, 2026): **no push-to-talk button.** While a
+game session is active, Bun Bun listens like a companion beside you, and she
+polices herself: the privacy gate closes her ears on private topics, deletes
+the audio, and she only comes back for game talk.
+
+Capture still passes gates, in order:
 
 1. ``mic_enabled`` in settings (default: **False**);
-2. an open listening window - a push-to-talk press or an explicit one-shot
-   consent from the control panel;
-3. the PipeWire source itself: if ``wpctl`` reports it muted (the hardware kill
-   switch) or the capture helper is missing, nothing is recorded.
+2. scope: in push-to-talk mode an open listening window; in session mode an
+   *active game session* (never the desktop, never while idle);
+3. the privacy cooldown after a private-topic hit;
+4. the PipeWire source itself: muted (hardware kill switch) or unreadable means
+   refuse. **Unknown is treated as unavailable, never as available.**
 
-Recorded clips are short 16 kHz mono WAV files in the system temp directory.
-They are fed only to a local STT backend (whisper.cpp when installed); there is
-no network access on this path, ever.
+Clips are short 16 kHz mono WAV temp files, fed only to the local STT backend,
+and discarded immediately after transcription. Nothing leaves the machine.
 """
 from __future__ import annotations
 
@@ -19,10 +24,12 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
 from .helpers import run
+from .privacy import PrivacyGate
 
 LOG = logging.getLogger("bunbun.audio.mic")
 
@@ -30,15 +37,19 @@ MAX_CLIP_SECONDS = 15.0
 
 
 class MicCapture:
-    """One listening window at a time; the kill switch always wins."""
+    """Listens like a companion during sessions; the kill switch always wins."""
 
     def __init__(self, config, source: Optional[str] = None):
         self.config = config
         self.source = source          # None -> PipeWire default source
-        self._window = threading.Event()
+        self._window = threading.Event()   # push-to-talk mode only
+        self._session_active = False       # session-listen mode only
         self._lock = threading.Lock()
         self._last_clip: Optional[Path] = None
-        self.stats = {"requested": 0, "gated": 0, "captured": 0, "failed": 0}
+        self._last_text: Optional[str] = None
+        self.privacy = PrivacyGate()
+        self.stats = {"requested": 0, "gated": 0, "captured": 0, "failed": 0,
+                      "privacy_mutes": 0}
 
     # -- gates -------------------------------------------------------------
     @property
@@ -47,24 +58,40 @@ class MicCapture:
         return bool(getattr(self.config, "mic_enabled", False))
 
     @property
+    def push_to_talk(self) -> bool:
+        return bool(getattr(self.config, "mic_push_to_talk", True))
+
+    @property
+    def session_active(self) -> bool:
+        return self._session_active
+
+    def set_session_active(self, active: bool) -> None:
+        """Gate 2 (session mode): mark whether a game session is running.
+
+        The watcher's game state drives this; the desktop and idle time are
+        always out of scope for listening.
+        """
+        self._session_active = bool(active)
+        if not active:
+            self._window.clear()
+
+    @property
     def window_open(self) -> bool:
         return self._window.is_set()
 
     def open_window(self) -> bool:
-        """Gate 2: open one listening window. Refuses while gate 1 is closed."""
-        if not self.allowed:
-            LOG.debug("mic window refused: capture disabled in settings")
+        """Gate 2 (push-to-talk mode). Refuses while disabled."""
+        if not self.allowed or not self.push_to_talk:
             return False
         self._window.set()
         return True
 
     def close_window(self) -> None:
-        """Close the listening window (button up, or the key released)."""
         self._window.clear()
 
     # -- kill switch -------------------------------------------------------
     def kill_switch_muted(self) -> Optional[bool]:
-        """Gate 3 mirror: True when the source reports muted.
+        """Gate 4 mirror: True when the source reports muted.
 
         ``None`` means "cannot check" (no wpctl, or it failed). A caller that
         cannot check must treat the microphone as unavailable, never available.
@@ -75,10 +102,19 @@ class MicCapture:
         return "MUTED" in proc.stdout.decode("utf-8", "replace").upper()
 
     # -- capture -----------------------------------------------------------
+    def _scope_open(self) -> bool:
+        """Gate 2: the mode's own scope."""
+        if self.push_to_talk:
+            return self.window_open
+        return self._session_active
+
     def capture(self, seconds: float = 4.0) -> Optional[Path]:
         """Record one short clip into a temp WAV. ``None`` when any gate is closed."""
         self.stats["requested"] += 1
-        if not self.allowed or not self.window_open:
+        if not self.allowed or not self._scope_open():
+            self.stats["gated"] += 1
+            return None
+        if self.privacy.muted(time.time()):
             self.stats["gated"] += 1
             return None
         muted = self.kill_switch_muted()
@@ -115,14 +151,35 @@ class MicCapture:
             self.stats["failed"] += 1
             return None
 
-    def discard(self) -> None:
-        """Delete the last clip without transcribing it."""
-        if self._last_clip is not None:
+    def listen_once(self, stt) -> Optional[str]:
+        """Capture, transcribe, then apply the privacy gate.
+
+        Returns the text for game talk, ``None`` when nothing was heard or the
+        clip was private. In both cases the WAV is deleted right away: the clip
+        never lives longer than this call.
+        """
+        clip = self.capture()
+        if clip is None:
+            return None
+        try:
+            text = stt.transcribe(clip) if stt is not None else None
+        finally:
             try:
-                self._last_clip.unlink(missing_ok=True)
+                clip.unlink(missing_ok=True)
             except OSError:
                 pass
             self._last_clip = None
+        self._last_text = text
+        now = time.time()
+        if not self.privacy.review(text, now):
+            self.stats["privacy_mutes"] += 1
+            return None
+        return text
+
+    @property
+    def last_text(self) -> Optional[str]:
+        """The most recent reviewed transcript, for debugging and tests."""
+        return self._last_text
 
 
 class WhisperBackend:
