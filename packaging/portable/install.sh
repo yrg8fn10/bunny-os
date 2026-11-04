@@ -185,6 +185,23 @@ else
   warn "agent payload missing; the panel will show Bun Bun offline"
 fi
 
+# --- 2d. Piper and the neural voice ---------------------------------------------
+if [[ -f "${HERE}/voice/bunny-default.onnx" ]]; then
+  step "Installing the neural voice (Piper)"
+  run install -d -m 0755 "${DESTDIR}${LIB}/piper" "${DESTDIR}/usr/share/bunbun/voices"
+  run cp -a "${HERE}/voice/piper/." "${DESTDIR}${LIB}/piper/"
+  run install -m 0644 "${HERE}/voice/bunny-default.onnx" "${DESTDIR}/usr/share/bunbun/voices/bunny-default.onnx"
+  run install -m 0644 "${HERE}/voice/bunny-default.onnx.json" "${DESTDIR}/usr/share/bunbun/voices/bunny-default.onnx.json"
+  put "${DESTDIR}${BIN}/piper" <<EOF
+#!/bin/sh
+exec env LD_LIBRARY_PATH="${LIB}/piper\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" "${LIB}/piper/piper" "\$@"
+EOF
+  run chmod 0755 "${DESTDIR}${BIN}/piper"
+  info "voice    : piper + bunny-default (human-sounding, all local)"
+else
+  warn "voice payload missing; Bun Bun falls back to espeak-ng"
+fi
+
 # Version metadata lives in /etc so the panel and the wizard report the build
 # they were installed from, not the host's os-release.
 put "${DESTDIR}${ETC_DIR}/build-info.json" <<EOF

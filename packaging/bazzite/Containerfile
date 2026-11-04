@@ -51,7 +51,9 @@ RUN set -eux; \
     test -f /usr/lib/bunny/bunbun/bunbun/service.py; \
     test -f /usr/share/backgrounds/bunny-os/bunny-glow.png; \
     test -f /usr/share/applications/bunny-os.desktop; \
-    test -f /usr/lib/systemd/user/bunny-bunbun.service
+    test -f /usr/lib/systemd/user/bunny-bunbun.service; \
+    test -x /usr/bin/piper; \
+    test -f /usr/share/bunbun/voices/bunny-default.onnx
 
 ARG BUNNY_VERSION=0.0.0
 LABEL org.opencontainers.image.title="Bunny OS (Bazzite Deck base)" \

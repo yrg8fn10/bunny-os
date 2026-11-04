@@ -40,10 +40,12 @@ class Utterance:
 class TTSPipeline:
     def __init__(self, config, backend: Backend | None = None,
                  on_spoken: Callable[[str], None] | None = None,
+                 voice_params: Callable[[], dict[str, float]] | None = None,
                  max_queue: int = 8):
         self.config = config
         self.backend = backend or detect(config)
         self.on_spoken = on_spoken
+        self.voice_params = voice_params
         self.queue: queue.Queue[Utterance] = queue.Queue(maxsize=max_queue)
         self._seq = 0
         self._lock = threading.Lock()
@@ -134,6 +136,15 @@ class TTSPipeline:
             return
         with tempfile.NamedTemporaryFile(dir=self.runtime_dir, suffix=".wav", delete=False) as fh:
             wav = Path(fh.name)
+        params = {}
+        if self.voice_params:
+            try:
+                params = dict(self.voice_params() or {})
+            except Exception:
+                LOG.debug("voice params unavailable", exc_info=True)
+        set_params = getattr(self.backend, "set_params", None)
+        if callable(set_params):
+            set_params(**params)
         try:
             if not self.backend.synthesize(text, wav):
                 self.stats["failed"] += 1

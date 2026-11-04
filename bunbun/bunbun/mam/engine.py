@@ -15,6 +15,7 @@ from ..bus import EventBus
 from ..hints import Hint, HintLibrary
 from ..memory import Memory
 from ..persona import Persona
+from ..emotion import MoodEngine
 from .policy import Decision, GameContext, Kind, PolicyEngine, Proposal, SettingsView
 
 
@@ -85,6 +86,7 @@ class MAMEngine:
         input_enabled: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
+        mood: "MoodEngine | None" = None,
     ):
         self.persona = persona
         self.hints = hints
@@ -96,6 +98,7 @@ class MAMEngine:
         self.input_enabled = input_enabled or (lambda: False)
         self.clock = clock
         self.rng = rng or random.Random()
+        self.mood = mood or MoodEngine(clock=clock, rng=rng)
         self.state = GameState()
         self._session_id: int | None = None
         self._last_tick = 0.0
@@ -131,10 +134,12 @@ class MAMEngine:
             greeting = self.persona.greet()
             outcomes.append(self._speak(greeting, Kind.SPEAK, dedupe="greeting:" + new_state.game_id))
             self._remember("game.started", new_state.to_dict(), new_state.game_id)
+            self.mood.apply_event("game.started")
 
         elif not new_state.game_id and previous.game_id:
             self._end_session()
             self.bus.publish("game.stopped", {"game_id": previous.game_id})
+            self.mood.apply_event("game.stopped")
 
         return [o for o in outcomes if o is not None]
 
@@ -147,7 +152,10 @@ class MAMEngine:
     def tick(self, payload: dict[str, Any] | None = None) -> list[Outcome]:
         if payload is not None:
             self.state = GameState.from_dict(payload)
-        self._last_tick = self.clock()
+        now = self.clock()
+        if self._last_tick:
+            self.mood.tick(max(0.0, now - self._last_tick))
+        self._last_tick = now
         settings = self.settings()
         state = self.state
         proposals: list[Proposal] = []
@@ -360,10 +368,15 @@ class MAMEngine:
         })
         return {"action": action.value, "granted": granted}
 
+    def observe_mood(self, level: str) -> dict[str, Any]:
+        """Accept a player-mood read (lively/normal/flat/down) and feel it."""
+        return self.mood.apply_event(self.mood.player_event(level))
+
     def status(self) -> dict[str, Any]:
         settings = self.settings()
         return {
             "state": self.state.to_dict(),
+            "mood": self.mood.to_dict(),
             "settings": {
                 "enabled": settings.enabled,
                 "voice_enabled": settings.voice_enabled,

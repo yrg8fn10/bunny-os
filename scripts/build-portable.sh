@@ -82,6 +82,37 @@ mkdir -p "${STAGE}/wallpaper"
 [[ -f "${ROOT}/assets/wallpaper/bunny-glow.png" ]] || die "missing ${ROOT}/assets/wallpaper/bunny-glow.png"
 cp -a "${ROOT}/assets/wallpaper/bunny-glow.png" "${STAGE}/wallpaper/bunny-glow.png"
 
+# --- the neural voice (Piper, bundled so Bun Bun sounds human out of the box) ---
+#  Pinned upstream URLs + sha256: the model ships as bunny-default.onnx, the key
+#  the engine's find_voice() looks for in /usr/share/bunbun/voices.
+VOICE_CACHE="${OUT_DIR}/voice-cache"
+PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
+PIPER_SHA256="a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992"
+VOICE_DIR_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium"
+VOICE_MODEL_SHA256="b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18"
+VOICE_JSON_SHA256="95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77"
+command -v curl >/dev/null || die "curl is needed to fetch the voice"
+mkdir -p "${VOICE_CACHE}"
+sha_ok() { echo "$2  $1" | (cd "$(dirname "$1")" && sha256sum -c - >/dev/null 2>&1); }
+if [[ ! -f "${VOICE_CACHE}/piper" ]]; then
+  log_info "voice    fetching the Piper engine (pinned)"
+  [[ -f "${VOICE_CACHE}/piper.tar.gz" ]] || curl -fL --retry 3 -o "${VOICE_CACHE}/piper.tar.gz" "${PIPER_URL}"
+  sha_ok "${VOICE_CACHE}/piper.tar.gz" "${PIPER_SHA256}" || die "piper release checksum mismatch"
+  rm -rf "${VOICE_CACHE}/piper-extract"; mkdir -p "${VOICE_CACHE}/piper-extract"
+  tar -xzf "${VOICE_CACHE}/piper.tar.gz" -C "${VOICE_CACHE}/piper-extract"
+  mv "${VOICE_CACHE}/piper-extract/piper" "${VOICE_CACHE}/piper"
+fi
+if [[ ! -f "${VOICE_CACHE}/bunny-default.onnx" ]]; then
+  log_info "voice    fetching the Bun Bun voice model (pinned)"
+  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_DIR_URL}/en_US-amy-medium.onnx?download=true"
+  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_DIR_URL}/en_US-amy-medium.onnx.json"
+fi
+sha_ok "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_MODEL_SHA256}" || die "voice model checksum mismatch"
+sha_ok "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_JSON_SHA256}" || die "voice config checksum mismatch"
+mkdir -p "${STAGE}/voice"
+cp -a "${VOICE_CACHE}/piper" "${STAGE}/voice/piper"
+cp -a "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_CACHE}/bunny-default.onnx.json" "${STAGE}/voice/"
+
 # --- documentation and installer --------------------------------------------
 cp -a "${ROOT}/packaging/portable/install.sh"   "${STAGE}/install.sh"
 cp -a "${ROOT}/packaging/portable/uninstall.sh" "${STAGE}/uninstall.sh"

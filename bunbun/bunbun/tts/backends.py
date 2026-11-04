@@ -45,6 +45,15 @@ class PiperBackend(Backend):
     def __init__(self, model: Path | None, binary: str = "piper"):
         self.model = Path(model) if model else None
         self.binary = binary
+        self.length_scale: float | None = None
+        self.noise_scale: float | None = None
+
+    def set_params(self, **params: float) -> None:
+        """Mood-driven synth parameters (see emotion.MoodEngine.voice_params)."""
+        if "length_scale" in params:
+            self.length_scale = max(0.5, min(2.0, float(params["length_scale"])))
+        if "noise_scale" in params:
+            self.noise_scale = max(0.1, min(1.0, float(params["noise_scale"])))
 
     def available(self) -> bool:
         return bool(self.model and self.model.is_file()
@@ -55,8 +64,14 @@ class PiperBackend(Backend):
             return False
         assert self.model is not None
         try:
+            cmd = [self.binary, "--model", str(self.model)]
+            if self.length_scale is not None:
+                cmd += ["--length_scale", str(self.length_scale)]
+            if self.noise_scale is not None:
+                cmd += ["--noise_scale", str(self.noise_scale)]
+            cmd += ["--output_file", str(out)]
             proc = subprocess.run(
-                [self.binary, "--model", str(self.model), "--output_file", str(out)],
+                cmd,
                 input=text.encode("utf-8"),
                 capture_output=True, timeout=30, check=False,
             )

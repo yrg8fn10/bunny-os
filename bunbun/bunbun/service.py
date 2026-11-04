@@ -43,6 +43,7 @@ from .mam import GameState, Kind, MAMEngine, PolicyEngine
 from .memory import Memory
 from .perception import GameWatcher
 from .persona import Persona
+from .emotion import MoodEngine
 from .audio.mic import MicCapture
 from .audio.router import AudioRouter
 from .tts import TTSPipeline
@@ -72,9 +73,11 @@ class AgentService:
         self.input_client = InputClient()
         self.started_at = time.time()
 
+        self.mood = MoodEngine()
         self.tts = TTSPipeline(
             config,
             on_spoken=lambda text: self.bus.publish("bunbun.spoken", {"text": text}),
+            voice_params=self.mood.voice_params,
         )
 
         self.engine = MAMEngine(
@@ -86,6 +89,7 @@ class AgentService:
             policy=PolicyEngine(kill_switch=self._kill_switch),
             speaker=self.tts.say,
             input_enabled=lambda: self.input_client.enabled,
+            mood=self.mood,
         )
 
         self.watcher = GameWatcher(self.bus)
@@ -160,6 +164,8 @@ class AgentService:
 
     # -- operations --------------------------------------------------------
     def observe(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if isinstance(payload, dict) and payload.get("type") == "player.mood":
+            return [self.engine.observe_mood(str(payload.get("level", "normal")))]
         return [o.to_dict() for o in self.engine.observe(payload)]
 
     def tick(self, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -195,6 +201,7 @@ class AgentService:
                 "input_enabled": self.input_client.enabled,
                 "mic_enabled": self.config.mic_enabled,
                 "mic_window_open": self.mic.window_open,
+                "mood": self.mood.to_dict(),
                 "local_only": True,
             },
             "engine": self.engine.status(),

@@ -102,6 +102,15 @@
       "I noticed something today and I want to know more. Can we chat after this run?",
       "You've gotten so good at this. How did you learn it?",
       "I keep a little notebook about our adventures. Mind if I add today?"
+    ],
+    "comfort": [
+      "It's okay, everyone has hard days.",
+      "I'm right here if you need me.",
+      "You're not alone, you know.",
+      "You did your best today.",
+      "Hey, be kind to yourself, okay?",
+      "Small steps still count!",
+      "I'll be here whenever you're ready."
     ]
   }
 }
