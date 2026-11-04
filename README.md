@@ -56,7 +56,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture and roadmap.
 | **Panel** | Home, Platforms, Tweaks, Bun Bun, Settings; every action reachable by d-pad |
 | **Platforms** | Steam (native), Epic and GOG via Heroic, Lutris, RetroArch |
 | **Tweaks** | Saved performance, display and audio preferences with validation; hardware writes are not wired yet |
-| **Bun Bun** | Persona, hints, commentary, co-op planner, memory purge, kill switch |
+| **Bun Bun** | Persona, hints, commentary, mood engine (advanced emotional system), local Piper voice, co-op planner, memory purge, kill switch |
 | **Sessions** | `bunny-session`, SDDM autologin, one-command mode switch, recovery docs |
 | **Installer** | Guided whole-disk UEFI install with Btrfs subvolumes and systemd-boot |
 | **Build** | One pipeline, `--dry-run`, Docker path, CI artefact + release workflow |
