@@ -37,7 +37,7 @@ EVENTS: dict[str, dict[str, float]] = {
     "game.stopped": {"energy": -0.05, "curiosity": -0.05},
     "player.win": {"pride": 0.20, "valence": 0.05, "energy": 0.05},
     "player.lose": {"worry": 0.15, "valence": -0.05, "energy": -0.05},
-    "player.sad": {"worry": 0.25, "valence": -0.10, "energy": -0.05},
+    "player.sad": {"worry": 0.30, "valence": -0.15, "energy": -0.05},
     "player.happy": {"valence": 0.10, "energy": 0.05},
     "player.quiet": {"worry": 0.10, "energy": -0.05},
     "player.calm": {},
@@ -96,7 +96,7 @@ class MoodEngine:
     # -- reads -------------------------------------------------------------
     def read_level(self) -> str:
         """Bun Bun's own state as a coarse level the control panel can show."""
-        if self.fields["worry"] >= 0.5 or self.fields["valence"] <= 0.35:
+        if self.fields["worry"] >= 0.4 or self.fields["valence"] <= 0.5:
             return "down"
         if self.fields["valence"] >= 0.65 and self.fields["energy"] >= 0.55:
             return "lively"
