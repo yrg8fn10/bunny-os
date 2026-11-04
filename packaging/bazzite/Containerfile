@@ -26,7 +26,7 @@ FROM ${BASE_IMAGE}
 # UI. Chromium is the one thing we add: the Deck has no terminal browser and
 # the wizard has to render before anything is installed.
 RUN set -eux; \
-    dnf install -y --setopt=install_weak_deps=False python3 chromium; \
+    dnf install -y --setopt=install_weak_deps=False python3 chromium espeak-ng; \
     dnf clean all; \
     rm -rf /var/cache/dnf /var/cache/libdnf5
 
@@ -47,7 +47,11 @@ RUN set -eux; \
     chmod 0755 /var/lib/bunny; \
     test -x /usr/bin/bunny-setupd; \
     test -f /usr/lib/bunny/ui/setup/index.html; \
-    test -f /usr/lib/systemd/system/bunny-setupd.service
+    test -f /usr/lib/systemd/system/bunny-setupd.service; \
+    test -f /usr/lib/bunny/bunbun/bunbun/service.py; \
+    test -f /usr/share/backgrounds/bunny-os/bunny-glow.png; \
+    test -f /usr/share/applications/bunny-os.desktop; \
+    test -f /usr/lib/systemd/user/bunny-bunbun.service
 
 ARG BUNNY_VERSION=0.0.0
 LABEL org.opencontainers.image.title="Bunny OS (Bazzite Deck base)" \

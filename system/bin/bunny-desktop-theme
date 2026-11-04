@@ -9,7 +9,8 @@
 # =============================================================================
 set -uo pipefail
 
-WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-meadow.png"
+WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-glow.png"
+[[ -f "${WALLPAPER}" ]] || WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-meadow.png"
 ACCENT="255,179,217"
 STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny"
 LOG_FILE="${STATE_DIR}/desktop-theme.log"

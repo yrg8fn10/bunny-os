@@ -56,6 +56,8 @@ for file in "${DESTDIR}${BIN}/bunny-panel" \
             "${DESTDIR}${APPS}/bunny-os.desktop" \
             "${DESTDIR}${APPS}/bunny-os-setup.desktop" \
             "${DESTDIR}/etc/xdg/autostart/bunny-os-setup.desktop" \
+            "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunbun.service" \
+            "${DESTDIR}/etc/systemd/user/default.target.wants/bunny-bunbun.service" \
             "${DESTDIR}${DOCS}/BAZZITE.md"; do
   [[ -e "${file}" ]] || continue
   rm -f "${file}"
@@ -64,6 +66,9 @@ done
 
 rm -rf "${DESTDIR}${LIB}"
 echo "  removed ${LIB}"
+
+rm -rf "${DESTDIR}/usr/share/backgrounds/bunny-os"
+echo "  removed /usr/share/backgrounds/bunny-os"
 
 if (( PURGE )); then
   rm -rf "${DESTDIR}/var/lib/bunny" "${DESTDIR}/etc/bunny"

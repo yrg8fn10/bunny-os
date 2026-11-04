@@ -161,6 +161,30 @@ else
 fi
 info "binaries : $(cd "${HERE}/bin" && ls | tr '\n' ' ')"
 
+# --- 2b. wallpaper -------------------------------------------------------------
+step "Installing the wallpaper"
+run install -d -m 0755 "${DESTDIR}/usr/share/backgrounds/bunny-os"
+if [[ -f "${HERE}/wallpaper/bunny-glow.png" ]]; then
+  run install -m 0644 "${HERE}/wallpaper/bunny-glow.png" "${DESTDIR}/usr/share/backgrounds/bunny-os/bunny-glow.png"
+  info "wallpaper: /usr/share/backgrounds/bunny-os/bunny-glow.png"
+else
+  warn "wallpaper payload missing; the desktop keeps the host default"
+fi
+
+# --- 2c. the Bun Bun agent -----------------------------------------------------
+AGENT_DIR="${LIB}/bunbun"
+step "Installing the Bun Bun agent"
+if [[ -f "${HERE}/agent/bunbun/service.py" ]]; then
+  run rm -rf "${DESTDIR}${AGENT_DIR}"
+  run install -d -m 0755 "${DESTDIR}${AGENT_DIR}"
+  run cp -a "${HERE}/agent/." "${DESTDIR}${AGENT_DIR}/"
+  find "${DESTDIR}${AGENT_DIR}" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  find "${DESTDIR}${AGENT_DIR}" -type f -name '*.pyc' -delete 2>/dev/null || true
+  info "agent    : ${AGENT_DIR} (bunbun.service on 127.0.0.1:8422)"
+else
+  warn "agent payload missing; the panel will show Bun Bun offline"
+fi
+
 # Version metadata lives in /etc so the panel and the wizard report the build
 # they were installed from, not the host's os-release.
 put "${DESTDIR}${ETC_DIR}/build-info.json" <<EOF
@@ -273,12 +297,43 @@ EOF
   fi
 fi
 
+# --- 3c. the Bun Bun agent user service -----------------------------------------
+if [[ -f "${DESTDIR}${AGENT_DIR}/bunbun/service.py" ]]; then
+  step "Installing bunny-bunbun.service (starts at every login)"
+  run install -d -m 0755 "${DESTDIR}${PREFIX}/lib/systemd/user"
+  put "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunbun.service" <<EOF
+[Unit]
+Description=Bun Bun companion agent (local MAM engine)
+Documentation=file://${PREFIX}/share/doc/bunny-os/BUNBUN.md
+After=default.target
+
+[Service]
+WorkingDirectory=${AGENT_DIR}
+ExecStart=/usr/bin/python3 -m bunbun.service --port 8422 --data-dir %h/.local/share/bunbun
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=default.target
+EOF
+  chmod 0644 "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunbun.service" 2>/dev/null || true
+  if [[ -n "${DESTDIR}" ]]; then
+    info "[destdir] user unit installed, systemctl not run"
+  elif [[ -n "${BUNNY_INSTALL_IMAGE:-}" ]]; then
+    run install -d -m 0755 "/etc/systemd/user/default.target.wants"
+    run ln -sfn "${PREFIX}/lib/systemd/user/bunny-bunbun.service" "/etc/systemd/user/default.target.wants/bunny-bunbun.service"
+    info "agent    : enabled for every future login"
+  else
+    run systemctl --global enable bunny-bunbun.service || warn "could not enable bunny-bunbun.service globally"
+  fi
+fi
+
 # --- 4. menu entries ---------------------------------------------------------
 step "Installing menu entries"
 put "${DESTDIR}${APPS}/bunny-os.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Bunny OS
+Name=Bunny Control Panel
 GenericName=Control Panel
 Comment=Controller-first panel for Bunny OS
 Exec=${BIN}/bunny-os
@@ -332,7 +387,7 @@ step "Done"
 cat <<EOF
     Bunny OS ${VERSION} is installed.
 
-    Start it        : bunny-os
+    Open it         : Bunny Control Panel in the app menu (or run bunny-os)
     Run the wizard  : bunny-os-setup
     Setup service   : systemctl status bunny-setupd
     Remove it       : sudo ${HERE}/uninstall.sh

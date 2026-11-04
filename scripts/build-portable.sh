@@ -69,6 +69,19 @@ cp -a "${ROOT}/control-panel/ui/." "${STAGE}/ui/"
 find "${STAGE}/ui" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "${STAGE}/ui" -type f -name '*.pyc' -delete 2>/dev/null || true
 
+# --- the Bun Bun agent (the MAM engine, stdlib-only) ---------------------------
+mkdir -p "${STAGE}/agent"
+cp -a "${ROOT}/bunbun/." "${STAGE}/agent/"
+rm -rf "${STAGE}/agent/tests" "${STAGE}/agent/.venv" "${STAGE}/agent/pyproject.toml" "${STAGE}/agent/__pycache__" 2>/dev/null || true
+find "${STAGE}/agent" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "${STAGE}/agent" -type f -name '*.pyc' -delete 2>/dev/null || true
+[[ -f "${STAGE}/agent/bunbun/service.py" ]] || die "agent engine missing bunbun/service.py"
+
+# --- the desktop wallpaper ------------------------------------------------------
+mkdir -p "${STAGE}/wallpaper"
+[[ -f "${ROOT}/assets/wallpaper/bunny-glow.png" ]] || die "missing ${ROOT}/assets/wallpaper/bunny-glow.png"
+cp -a "${ROOT}/assets/wallpaper/bunny-glow.png" "${STAGE}/wallpaper/bunny-glow.png"
+
 # --- documentation and installer --------------------------------------------
 cp -a "${ROOT}/packaging/portable/install.sh"   "${STAGE}/install.sh"
 cp -a "${ROOT}/packaging/portable/uninstall.sh" "${STAGE}/uninstall.sh"
