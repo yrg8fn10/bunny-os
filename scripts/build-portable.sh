@@ -88,9 +88,14 @@ cp -a "${ROOT}/assets/wallpaper/bunny-glow.png" "${STAGE}/wallpaper/bunny-glow.p
 VOICE_CACHE="${OUT_DIR}/voice-cache"
 PIPER_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"
 PIPER_SHA256="a50cb45f355b7af1f6d758c1b360717877ba0a398cc8cbe6d2a7a3a26e225992"
-VOICE_DIR_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium"
-VOICE_MODEL_SHA256="b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18"
-VOICE_JSON_SHA256="95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77"
+# Bun Bun's voice: the "THV" speaker (speaker id 1) of Piper's L2-Arctic voice,
+# a real person reading English with a gentle Vietnamese accent. The model ships
+# as bunny-default.onnx, the key the engine's find_voice() looks for. Dataset:
+# L2-Arctic (Zhao et al., Interspeech 2018), license CC BY-NC 4.0 - fine for
+# personal use; re-check before any commercial redistribution.
+VOICE_DIR_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/l2arctic/medium"
+VOICE_MODEL_SHA256="d89f6f124bf1e7735b2179d2141b8001c3e19169d5e743ed6e35624f4c76f044"
+VOICE_JSON_SHA256="a97e2ba653e9efcdc1bdcec64a398c8beb19ae5e8dfdbfe4ad6841983e56c07c"
 command -v curl >/dev/null || die "curl is needed to fetch the voice"
 mkdir -p "${VOICE_CACHE}"
 sha_ok() { echo "$2  $1" | (cd "$(dirname "$1")" && sha256sum -c - >/dev/null 2>&1); }
@@ -104,14 +109,21 @@ if [[ ! -f "${VOICE_CACHE}/piper" ]]; then
 fi
 if [[ ! -f "${VOICE_CACHE}/bunny-default.onnx" ]]; then
   log_info "voice    fetching the Bun Bun voice model (pinned)"
-  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_DIR_URL}/en_US-amy-medium.onnx?download=true"
-  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_DIR_URL}/en_US-amy-medium.onnx.json"
+  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_DIR_URL}/en_US-l2arctic-medium.onnx?download=true"
+  curl -fL --retry 3 -o "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_DIR_URL}/en_US-l2arctic-medium.onnx.json"
 fi
 sha_ok "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_MODEL_SHA256}" || die "voice model checksum mismatch"
 sha_ok "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_JSON_SHA256}" || die "voice config checksum mismatch"
 mkdir -p "${STAGE}/voice"
 cp -a "${VOICE_CACHE}/piper" "${STAGE}/voice/piper"
 cp -a "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_CACHE}/bunny-default.onnx.json" "${STAGE}/voice/"
+cat > "${STAGE}/voice/VOICE-NOTE.txt" <<'EOF'
+Bun Bun's default voice is the "THV" speaker (speaker id 1) of Piper's
+en_US-l2arctic-medium model: a real person reading English with a gentle
+Vietnamese accent. Dataset: L2-Arctic (Zhao et al., Interspeech 2018),
+license CC BY-NC 4.0. Free for personal and non-commercial use; check the
+license before any commercial redistribution.
+EOF
 
 # --- documentation and installer --------------------------------------------
 cp -a "${ROOT}/packaging/portable/install.sh"   "${STAGE}/install.sh"

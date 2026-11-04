@@ -37,7 +37,8 @@
     "coop_mode": "invite-only",
     "screen_vision": false,
     "memory_enabled": true,
-    "kid_safe": true
+    "kid_safe": true,
+    "speaker": 1
   },
   "updates": {
     "channel": "stable",

@@ -42,9 +42,11 @@ class Backend:
 class PiperBackend(Backend):
     name = "piper"
 
-    def __init__(self, model: Path | None, binary: str = "piper"):
+    def __init__(self, model: Path | None, binary: str = "piper",
+                 speaker: int | None = None):
         self.model = Path(model) if model else None
         self.binary = binary
+        self.speaker = speaker
         self.length_scale: float | None = None
         self.noise_scale: float | None = None
 
@@ -65,6 +67,8 @@ class PiperBackend(Backend):
         assert self.model is not None
         try:
             cmd = [self.binary, "--model", str(self.model)]
+            if self.speaker is not None:
+                cmd += ["--speaker", str(self.speaker)]
             if self.length_scale is not None:
                 cmd += ["--length_scale", str(self.length_scale)]
             if self.noise_scale is not None:
@@ -137,7 +141,7 @@ def detect(config) -> Backend:  # noqa: ANN001 - AgentConfig, avoid import cycle
         return NullBackend()
     model = config.piper_model or find_voice(config.voice)
     if mode in {"auto", "piper"}:
-        piper = PiperBackend(model)
+        piper = PiperBackend(model, speaker=getattr(config, "voice_speaker", None))
         if piper.available():
             return piper
         if mode == "piper":

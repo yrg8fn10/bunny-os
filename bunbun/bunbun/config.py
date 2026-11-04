@@ -27,6 +27,7 @@ class AgentConfig:
     settings_file: Path = SYSTEM_SETTINGS
     voice_enabled: bool = True
     voice: str = "bunny-default"
+    voice_speaker: int | None = None  # multi-speaker models: which speaker is Bun Bun
     hint_level: str = "gentle"
     commentary: bool = True
     coop_opt_in: bool = False
@@ -63,6 +64,15 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _optional_int(value: Any, default: int | None) -> int | None:
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _coerce_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -87,6 +97,7 @@ def load_config(settings_file: Path | None = None,
         cfg,
         voice_enabled=_coerce_bool(pick("voice_enabled", cfg.voice_enabled), cfg.voice_enabled),
         voice=str(pick("voice", cfg.voice)),
+        voice_speaker=_optional_int(pick("speaker", cfg.voice_speaker), cfg.voice_speaker),
         hint_level=str(pick("hint_level", cfg.hint_level)),
         commentary=_coerce_bool(pick("commentary", cfg.commentary), cfg.commentary),
         coop_opt_in=_coerce_bool(pick("coop_opt_in", cfg.coop_opt_in), cfg.coop_opt_in),

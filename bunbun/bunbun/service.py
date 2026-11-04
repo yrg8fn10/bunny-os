@@ -112,7 +112,7 @@ class AgentService:
         ai = dict(system.get("ai", {}))
         # User overrides win, but only for keys the schema knows about.
         for key, value in user.items():
-            if key in {"voice", "hint_level", "commentary", "coop_opt_in", "coop_mode",
+            if key in {"voice", "speaker", "hint_level", "commentary", "coop_opt_in", "coop_mode",
                        "screen_vision", "kid_safe", "memory_enabled", "voice_enabled",
                        "enabled"}:
                 ai[key] = value
