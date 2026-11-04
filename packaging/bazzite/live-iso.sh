@@ -76,6 +76,20 @@ mkdir -p /etc/anaconda/profile.d /etc/anaconda/conf.d
 install -m 0644 /src/anaconda/bunny.conf /etc/anaconda/profile.d/bunny.conf
 install -m 0644 /src/anaconda/anaconda.conf /etc/anaconda/conf.d/anaconda.conf
 
+# --- 3b. failures stay local -------------------------------------------------
+# The stock installer's failure dialog offers to file the error report to
+# Fedora's Bugzilla and asks the operator for a Bugzilla login token.  Bunny OS
+# is all-local: a failed install reports on screen and saves its logs locally,
+# never upstream, and never needs any token.  Remove the upstream reporter and
+# its workflow so the dialog cannot ask.
+dnf -qy remove --setopt=clean_requirements_on_remove=False \
+    libreport-plugin-bugzilla libreport-plugin-reportuploader \
+    2>/dev/null \
+  || rpm -e --nodeps libreport-plugin-bugzilla libreport-plugin-reportuploader \
+    2>/dev/null || true
+rm -f /usr/share/libreport/workflows/*ugzilla* \
+      /usr/share/libreport/events/*ugzilla* 2>/dev/null || true
+
 printf 'Bunny OS live image (%s)\n' "${VARIANT_ID}" > /etc/system-release
 
 # This is a live medium, not a desktop: Anaconda installs the *payload* image,
@@ -161,6 +175,13 @@ test -d /boot/efi/EFI
 test -f /etc/anaconda/profile.d/bunny.conf
 test -f /etc/skel/.config/autostart/bunny-installer.desktop
 grep -q 'root=live:CDLABEL' /usr/lib/bootc-image-builder/iso.yaml
+
+# The failure dialog must never offer an upstream bug report.
+if compgen -G '/usr/share/libreport/workflows/*ugzilla*' >/dev/null 2>&1 \
+   || compgen -G '/usr/share/libreport/events/*ugzilla*' >/dev/null 2>&1; then
+  echo 'upstream bug-report workflow still present in the live image' >&2
+  exit 1
+fi
 
 dnf clean all
 rm -rf /var/cache/dnf /var/cache/libdnf5
