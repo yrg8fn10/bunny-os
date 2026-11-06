@@ -30,6 +30,15 @@ dnf install -y --setopt=install_weak_deps=False --allowerasing \
     firefox \
     libblockdev-btrfs libblockdev-lvm libblockdev-dm
 
+# --- 1b. Bun Bun boot branding ----------------------------------------------
+# The stock splash is upstream Bazzite's.  Swap in the Bun Bun Plymouth theme
+# before the initramfs is regenerated, so the live medium boots to the bunny.
+install -d /usr/share/plymouth/themes/bunbun
+install -m 0644 /src/plymouth-bunbun/bunbun.plymouth /usr/share/plymouth/themes/bunbun/
+install -m 0644 /src/plymouth-bunbun/bunbun-logo.png /usr/share/plymouth/themes/bunbun/
+ln -sfn bunbun/bunbun.plymouth /usr/share/plymouth/themes/default.plymouth
+printf '[Daemon]\nTheme=bunbun\n' > /etc/plymouth/plymouthd.conf
+
 # Anaconda Web UI keeps state here.
 mkdir -p /var/lib/rpm-state
 
@@ -174,6 +183,7 @@ test -f "/usr/lib/modules/${kernel}/initramfs.img"
 test -d /boot/efi/EFI
 test -f /etc/anaconda/profile.d/bunny.conf
 test -f /etc/skel/.config/autostart/bunny-installer.desktop
+readlink /usr/share/plymouth/themes/default.plymouth | grep -q bunbun
 grep -q 'root=live:CDLABEL' /usr/lib/bootc-image-builder/iso.yaml
 
 # The failure dialog must never offer an upstream bug report.

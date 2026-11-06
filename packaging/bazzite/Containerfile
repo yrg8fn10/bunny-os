@@ -55,6 +55,21 @@ RUN set -eux; \
     test -x /usr/bin/piper; \
     test -f /usr/share/bunbun/voices/bunny-default.onnx
 
+# Bun Bun boot branding: replace the upstream Bazzite boot splash with the
+# Bun Bun Plymouth theme, so booting into Gaming Mode shows the bunny, not
+# Bazzite's logo. The default.plymouth symlink lives in /usr, so the theme
+# survives rpm-ostree updates.
+COPY plymouth-bunbun/ /tmp/bunny-branding/
+RUN set -eux; \
+    install -d /usr/share/plymouth/themes/bunbun; \
+    install -m 0644 /tmp/bunny-branding/bunbun.plymouth /usr/share/plymouth/themes/bunbun/; \
+    install -m 0644 /tmp/bunny-branding/bunbun-logo.png /usr/share/plymouth/themes/bunbun/; \
+    ln -sfn bunbun/bunbun.plymouth /usr/share/plymouth/themes/default.plymouth; \
+    printf '[Daemon]\nTheme=bunbun\n' > /etc/plymouth/plymouthd.conf; \
+    rm -rf /tmp/bunny-branding; \
+    readlink /usr/share/plymouth/themes/default.plymouth | grep -q bunbun; \
+    test -f /usr/share/plymouth/themes/bunbun/bunbun-logo.png
+
 ARG BUNNY_VERSION=0.0.0
 LABEL org.opencontainers.image.title="Bunny OS (Bazzite Deck base)" \
       org.opencontainers.image.description="Bazzite Deck with the Bunny OS Control Panel and first-boot wizard" \

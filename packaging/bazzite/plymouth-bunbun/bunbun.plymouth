@@ -1,0 +1,14 @@
+[bunbun]
+ModuleName=/usr/lib64/plymouth/two-step.so
+
+[two-step]
+Font=DejaVu Sans 12
+UseFirmwareBackground=false
+UseProgressBar=false
+Watermark=/usr/share/plymouth/themes/bunbun/bunbun-logo.png
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.5
+
+[native]
+BackgroundStartColor=0x0b0f1a
+BackgroundEndColor=0x1a1030
