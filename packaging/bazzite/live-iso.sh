@@ -27,6 +27,7 @@ dnf install -y --setopt=install_weak_deps=False --allowerasing \
     livesys-scripts \
     grub2-efi-x64-cdboot \
     anaconda-live \
+    ostree \
     firefox \
     libblockdev-btrfs libblockdev-lvm libblockdev-dm
 
@@ -123,18 +124,26 @@ for unit in podman-auto-update.timer bazzite-user-setup.service \
   systemctl --global disable "${unit}" 2>/dev/null || true
 done
 
-# The installer is the only thing to do on this medium.
-install -d /etc/skel/.config/autostart
-cat > /etc/skel/.config/autostart/bunny-installer.desktop <<'EOF'
+# The installer is the only thing to do on this medium, so it must be
+# findable no matter what: system-wide XDG autostart (not skel-dependent,
+# which could silently not fire), an entry in the application menu, and a
+# desktop icon, so the wizard can always be opened by hand.
+install -d /etc/xdg/autostart /etc/skel/.config/autostart /etc/skel/Desktop
+cat > /usr/share/applications/bunny-installer.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Install Bunny OS
+GenericName=Bunny OS Setup Wizard
 Comment=Install Bunny OS on this Steam Deck
 Exec=/usr/bin/liveinst
 Icon=org.fedoraproject.AnacondaInstaller
 Terminal=false
-X-GNOME-Autostart-enabled=true
+Categories=System;Utility;
+Keywords=bunny;install;setup;
 EOF
+cp -a /usr/share/applications/bunny-installer.desktop /etc/xdg/autostart/
+cp -a /usr/share/applications/bunny-installer.desktop /etc/skel/.config/autostart/
+cp -a /usr/share/applications/bunny-installer.desktop /etc/skel/Desktop/
 
 # --- 4. the payload image ----------------------------------------------------
 # Anaconda installs this image out of local container storage, which is what
@@ -182,7 +191,9 @@ test -f /usr/lib/bootc-image-builder/iso.yaml
 test -f "/usr/lib/modules/${kernel}/initramfs.img"
 test -d /boot/efi/EFI
 test -f /etc/anaconda/profile.d/bunny.conf
-test -f /etc/skel/.config/autostart/bunny-installer.desktop
+test -f /etc/xdg/autostart/bunny-installer.desktop
+test -f /usr/share/applications/bunny-installer.desktop
+test -f /etc/skel/Desktop/bunny-installer.desktop
 readlink /usr/share/plymouth/themes/default.plymouth | grep -q bunbun
 grep -q 'root=live:CDLABEL' /usr/lib/bootc-image-builder/iso.yaml
 
