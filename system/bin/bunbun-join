@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""bunbun-join — join a LAN multiplayer game as Bun Bun (EXPERIMENTAL).
+
+Commands:
+    doctor    check the local pieces and print a readiness report
+    join      launch the second game client configured in bunbun-multiplayer.json
+    config    print the config file path
+    farewell  print one session-end goodbye line (for wiring tests)
+
+The join config lives at ~/.config/bunbun-multiplayer.json and never leaves
+the machine.  See docs/MULTIPLAYER-JOIN.md before the first real join.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    from bunbun.multiplayer import (
+        DEFAULT_CONFIG_PATH,
+        MultiplayerConfigError,
+        build_launch_command,
+        doctor,
+        load_config,
+    )
+    from bunbun.farewell import pick as pick_farewell
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bunbun"))
+    from bunbun.multiplayer import (
+        DEFAULT_CONFIG_PATH,
+        MultiplayerConfigError,
+        build_launch_command,
+        doctor,
+        load_config,
+    )
+    from bunbun.farewell import pick as pick_farewell
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    report = doctor(cfg)
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_join(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    command = build_launch_command(cfg)
+    if command is None:
+        print("not ready: no launch_args_template in the config yet.", file=sys.stderr)
+        print("Join the server once by hand, then put the working command into", file=sys.stderr)
+        print("launch_args_template using {host} {port} {player} {password} placeholders.", file=sys.stderr)
+        return 2
+    if not cfg.server_host:
+        print("not ready: server_host is empty in the config.", file=sys.stderr)
+        return 2
+    print("starting second client as", cfg.player_name)
+    if args.dry_run:
+        print(" ".join(command))
+        return 0
+    subprocess.Popen(command)
+    return 0
+
+
+def cmd_config(_args: argparse.Namespace) -> int:
+    print(str(DEFAULT_CONFIG_PATH.expanduser()))
+    return 0
+
+
+def cmd_farewell(_args: argparse.Namespace) -> int:
+    print(pick_farewell(random.Random()))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="bunbun-join")
+    parser.add_argument("--config", default=None, help="join config path override")
+    subs = parser.add_subparsers(dest="command", required=True)
+    subs.add_parser("doctor").set_defaults(func=cmd_doctor)
+    join = subs.add_parser("join")
+    join.add_argument("--dry-run", action="store_true", help="print the command, do not start it")
+    join.set_defaults(func=cmd_join)
+    subs.add_parser("config").set_defaults(func=cmd_config)
+    subs.add_parser("farewell").set_defaults(func=cmd_farewell)
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except MultiplayerConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
