@@ -53,7 +53,7 @@ safe_rmrf "${STAGE}"
 mkdir -p "${STAGE}/bin" "${STAGE}/ui" "${STAGE}/docs"
 
 # --- binaries ----------------------------------------------------------------
-for tool in bunny-panel bunny-panel-bridge bunny-setupd; do
+for tool in bunny-panel bunny-panel-bridge bunny-setupd bunbun-join; do
   src="${ROOT}/system/bin/${tool}"
   [[ -f "${src}" ]] || die "missing ${src}"
   install -m 0755 "${src}" "${STAGE}/bin/${tool}"
