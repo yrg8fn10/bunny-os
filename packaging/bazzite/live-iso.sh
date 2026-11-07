@@ -24,13 +24,16 @@ dnf -qy versionlock clear || true
 # --- 1. live root and installer ---------------------------------------------
 # anaconda-live ships /usr/bin/liveinst (the launcher the Install Bunny OS
 # button runs); liveinstaller/ reinstalls those files at the end, explicitly.
-# points at.  It is only a weak dependency of anaconda-live, and the install
-# below runs with weak dependencies disabled, so name it explicitly.
+# liveinst only runs the real installer, the `anaconda` package, which is a
+# WEAK dependency of anaconda-live.  With weak dependencies disabled (below)
+# dnf silently skipped it, so the launcher had nothing to launch.  Name both
+# explicitly.
 dnf install -y --setopt=install_weak_deps=False --allowerasing \
     dracut-live \
     livesys-scripts \
     grub2-efi-x64-cdboot \
     anaconda-live \
+    anaconda \
     ostree \
     firefox \
     libblockdev-btrfs libblockdev-lvm libblockdev-dm
@@ -202,6 +205,8 @@ test -f "/usr/lib/modules/${kernel}/initramfs.img"
 test -d /boot/efi/EFI
 test -x /usr/bin/liveinst
 test -x /usr/libexec/liveinst-setup.sh
+command -v anaconda
+command -v anaconda-cleanup
 test -f /usr/share/polkit-1/actions/org.fedoraproject.pkexec.liveinst.policy
 test -f /etc/anaconda/profile.d/bunny.conf
 test -f /etc/xdg/autostart/bunny-installer.desktop
