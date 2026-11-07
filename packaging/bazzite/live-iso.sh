@@ -22,11 +22,15 @@ VARIANT_ID="${VARIANT_ID:-bunny-deck}"
 dnf -qy versionlock clear || true
 
 # --- 1. live root and installer ---------------------------------------------
+# liveinst provides /usr/bin/liveinst, the program the installer launcher
+# points at.  It is only a weak dependency of anaconda-live, and the install
+# below runs with weak dependencies disabled, so name it explicitly.
 dnf install -y --setopt=install_weak_deps=False --allowerasing \
     dracut-live \
     livesys-scripts \
     grub2-efi-x64-cdboot \
     anaconda-live \
+    liveinst \
     ostree \
     firefox \
     libblockdev-btrfs libblockdev-lvm libblockdev-dm
@@ -190,6 +194,7 @@ EOF
 test -f /usr/lib/bootc-image-builder/iso.yaml
 test -f "/usr/lib/modules/${kernel}/initramfs.img"
 test -d /boot/efi/EFI
+test -x /usr/bin/liveinst
 test -f /etc/anaconda/profile.d/bunny.conf
 test -f /etc/xdg/autostart/bunny-installer.desktop
 test -f /usr/share/applications/bunny-installer.desktop
