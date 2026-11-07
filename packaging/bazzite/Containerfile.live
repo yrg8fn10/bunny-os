@@ -26,6 +26,7 @@ ENV ISO_LABEL=${ISO_LABEL} \
 COPY live-iso.sh /src/live-iso.sh
 COPY anaconda/ /src/anaconda/
 COPY plymouth-bunbun/ /src/plymouth-bunbun/
+COPY liveinstaller/ /src/liveinstaller/
 
 # /ctx is the build directory: it holds bunny-deck.oci.  Bind-mounting keeps
 # the multi-gigabyte archive out of the image layer.

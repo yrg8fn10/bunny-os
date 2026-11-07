@@ -1,0 +1,279 @@
+#!/usr/bin/bash
+#
+# Simple script to kick off an install from a live CD
+#
+# Copyright (C) 2007  Red Hat, Inc.  All rights reserved.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+BACKEND_READY_FLAG=/run/anaconda/backend_ready
+
+WAYLAND_DISPLAY_SOCKET=/tmp/anaconda-wldisplay
+ATSPI_BUSADDR=/tmp/anaconda-atspibusaddr
+
+
+# Start locale1-x11-sync.service unit to enable Anaconda to control keyboard layouts
+# This needs to be started only on X11 based systems
+start_locale_sync_unit() {
+    if [ -z "${WAYLAND_DISPLAY}" ] && [ -n "${DISPLAY}" ] && [ -e "/usr/lib/systemd/user/locale1-x11-sync.service" ]; then
+        systemctl --user start locale1-x11-sync.service
+    fi
+}
+
+stop_locale_sync_unit() {
+    if [ -z "${WAYLAND_DISPLAY}" ] && [ -n "${DISPLAY}" ] && [ -e "/usr/lib/systemd/user/locale1-x11-sync.service" ]; then
+        systemctl --user stop locale1-x11-sync.service
+    fi
+}
+
+# Detect and save the wayland socket before re-exec
+if [ -n "$WAYLAND_DISPLAY" ]; then
+    if [ -e "$WAYLAND_DISPLAY_SOCKET" ]; then
+        rm -f "${WAYLAND_DISPLAY_SOCKET}"
+    fi
+    touch "${WAYLAND_DISPLAY_SOCKET}"
+    echo "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" > ${WAYLAND_DISPLAY_SOCKET}
+fi
+
+# Detect and save the a11y bus path before re-exec
+if [ -n "$WAYLAND_DISPLAY" ] && [ -z "$AT_SPI_BUS_ADDRESS" ]; then
+    if [ -e "$ATSPI_BUSADDR" ]; then
+        rm -f "${ATSPI_BUSADDR}"
+    fi
+    _BUSCTL_OUTPUTREGEX='"([^"]+)"'
+    _ATSPIADDR="$( busctl call --user org.a11y.Bus /org/a11y/bus org.a11y.Bus GetAddress )"
+    # Check that the busctl call did not fail and grab expected output
+    # shellcheck disable=SC2181
+    if [ "$?" -eq 0 ] && [[ $_ATSPIADDR =~ $_BUSCTL_OUTPUTREGEX ]]; then
+        touch "${ATSPI_BUSADDR}"
+        echo "${BASH_REMATCH[1]}" > ${ATSPI_BUSADDR}
+    fi
+fi
+
+
+# The command needs to be run with root privileges, so if it was started
+# unprivileged, restart running as root.
+if [ "$(id -u)" -ne 0 ]; then
+    if [ -z "$WAYLAND_DISPLAY" ]; then
+        xhost +si:localuser:root
+    fi
+
+    start_locale_sync_unit
+    pkexec "$0" "$@"
+    ret=$?
+    stop_locale_sync_unit
+
+    exit $ret
+fi
+
+# pkexec clears the environment, so get it back
+if [ -n "${PKEXEC_UID}" ]; then
+    INSTALLER_USER=$(id -n -u "${PKEXEC_UID}")
+    readarray -t user_environment < <(pkexec --user "${INSTALLER_USER}" env XDG_RUNTIME_DIR="/run/user/${PKEXEC_UID}" systemctl --user show-environment)
+
+    for variable in "${user_environment[@]}"; do
+      export "${variable?}"
+    done
+fi
+
+# pkexec clears WAYLAND_DISPLAY from environment
+if [ -z "$WAYLAND_DISPLAY" ] && [ -e "$WAYLAND_DISPLAY_SOCKET" ]; then
+    WAYLAND_DISPLAY=$(cat "${WAYLAND_DISPLAY_SOCKET}")
+    export WAYLAND_DISPLAY
+fi
+
+# needed to enable a11y features on Wayland environments
+if [ -n "$WAYLAND_DISPLAY" ] && [ -z "$AT_SPI_BUS_ADDRESS" ]; then
+    AT_SPI_BUS_ADDRESS=$(cat "${ATSPI_BUSADDR}")
+    export AT_SPI_BUS_ADDRESS
+fi
+
+# use the correct home and config directories for system settings
+PKEXEC_USER=$(id -un "${PKEXEC_UID}")
+HOME=$(bash -c "cd ~${PKEXEC_USER} && pwd")
+export HOME
+XDG_CONFIG_HOME="${HOME}/.config"
+export XDG_CONFIG_HOME
+
+# Prevent multiple instances (rhbz#2440264): only one installer at a time
+LIVEINST_LOCK=/run/anaconda/liveinst.lock
+mkdir -p /run/anaconda
+exec 9>"${LIVEINST_LOCK}"
+if ! flock -n 9; then
+    title="Installer already running"
+    text="The installer is already running. Please use the existing installer window."
+    if which zenity &>/dev/null; then
+        zenity --info --no-markup --title="$title" --text="$text"
+    else
+        echo "$title: $text" >&2
+    fi
+    exit 0
+fi
+
+# Allow running another command in the place of anaconda, but in this same
+# environment.  This allows storage testing to make use of all the module
+# loading and lvm control in this file, too.
+ANACONDA="${LIVECMD:=anaconda --liveinst --graphical}"
+
+# load modules that would get loaded by the initramfs (#230945)
+for i in raid0 raid1 raid5 raid6 raid456 raid10 dm-mod dm-zero dm-mirror dm-snapshot dm-multipath dm-round-robin vfat dm-crypt cbc sha256 lrw xts iscsi_tcp iscsi_ibft; do /sbin/modprobe $i 2>/dev/null ; done
+
+if [ -f /etc/system-release ]; then
+    export ANACONDA_PRODUCTNAME
+    ANACONDA_PRODUCTNAME=$(sed -r -e 's/ *release.*//' /etc/system-release)
+    export ANACONDA_PRODUCTVERSION
+    ANACONDA_PRODUCTVERSION=$(sed -r -e 's/^.* ([0-9\.]+).*$/\1/' /etc/system-release)
+fi
+
+RELEASE=$(rpm -q --qf '%{Release}' --whatprovides system-release)
+if [ "${RELEASE:0:2}" = "0." ]; then
+    export ANACONDA_ISFINAL="false"
+else
+    export ANACONDA_ISFINAL="true"
+fi
+
+export PATH=/sbin:/usr/sbin:$PATH
+
+if [ -x /usr/sbin/getenforce ]; then
+    current=$(/usr/sbin/getenforce)
+    /usr/sbin/setenforce 0
+fi
+
+if (! sestatus | grep -q enabled) then
+    ANACONDA="$ANACONDA --noselinux"
+fi
+
+# Process cmdline args
+for opt in $(cat /proc/cmdline) "$@"; do
+    case $opt in
+    updates=*)
+        UPDATES="${opt#updates=}"
+        ;;
+    --updates=*)
+        UPDATES="${opt#--updates=}"
+        ;;
+    inst.updates=*)
+        UPDATES="${opt#inst.updates=}"
+        ;;
+    --inst.updates=*)
+        UPDATES="${opt#--inst.updates=}"
+        ;;
+    --updates)
+        title="updates error"
+        text="liveinst requires --updates=<url> instead of --updates <url>"
+        if which zenity &> /dev/null; then
+            zenity --error --no-markup --title="$title" --text="$text"
+        else
+            echo "$title" >&2
+            echo "$text" >&2
+        fi
+        exit 1
+        ;;
+    ks=*|kickstart=*|--ks=*|--kickstart=*|inst.ks=*|--inst.ks=*|inst.kickstart=*|--inst-kickstart=*)
+        title="Configuration not supported"
+        text="Kickstart is not supported on Live ISO installs, please use netinstall or standard ISO.  This installation will continue interactively."
+        if which zenity &> /dev/null; then
+            zenity --warning --title="$title" --text="$text"
+         else
+            echo "$title" >&2
+            echo "$text" >&2
+         fi
+        ;;
+    rescue|--rescue)
+        title="Configuration not supported"
+        text="Rescue mode is not supported on live media.  Please use the normal system tools to recover your system."
+        if which zenity &> /dev/null; then
+            zenity --warning --title="$title" --text="$text"
+         else
+            echo "$title" >&2
+            echo "$text" >&2
+         fi
+         exit 1
+        ;;
+    rdp|rdp.username|rdp.password|--rdp|--rdp.username|--rdp.password)
+        title="Configuration not supported"
+        text="RDP is not supported on live media."
+        if which zenity &> /dev/null; then
+            zenity --warning --title="$title" --text="$text"
+         else
+            echo "$title" >&2
+            echo "$text" >&2
+         fi
+         exit 1
+        ;;
+    esac
+done
+
+# unmount anything that shouldn't be mounted prior to install
+anaconda-cleanup "$ANACONDA" "$@"
+
+# Set up the updates, if provided.
+if [ -n "$UPDATES" ]; then
+    curl -o /tmp/updates.img "$UPDATES"
+
+    # We officially support two updates.img formats:  a filesystem image, and
+    # a compressed cpio blob.
+    if (file /tmp/updates.img | grep -q 'gzip compressed data'); then
+        ( cd / ; gzip -dc /tmp/updates.img | cpio -idu )
+    else
+        mkdir /tmp/updates.disk
+        mount -t auto /tmp/updates.img /tmp/updates.disk
+        cp -Rt / /tmp/updates.disk/*
+        umount /tmp/updates.disk
+        rmdir /tmp/updates.disk
+    fi
+
+fi
+
+start_anaconda_web_ui() {
+    # remove flag file about initialized backend it shouldn't exists
+    # if the file existed before it might be a broken cleanup
+    if [ -e "$BACKEND_READY_FLAG" ]; then
+        echo "Anaconda backend flag file still exists! Probably a problem with cleanup. Removing now!" >&2
+        rm -f "$BACKEND_READY_FLAG" 2>/dev/null
+    fi
+    # early execution of Firefox to reduce starting time
+    mkdir -p /run/anaconda
+    /usr/libexec/anaconda/webui-desktop -t live &
+    echo -n "$!" > /run/anaconda/webui_script.pid
+}
+
+start_anaconda() {
+    # start Firefox to use Anaconda Web UI if it is installed
+    if [ -e "/usr/share/cockpit/anaconda-webui" ]; then
+        start_anaconda_web_ui
+    fi
+    # start Anaconda main process
+    $ANACONDA "$@"
+}
+
+# If no wayland socket is set, force x11 so that it loads correctly
+if [ -z "$WAYLAND_DISPLAY" ]; then
+    export GDK_BACKEND=x11
+fi
+
+if [ -x /usr/bin/udisks ]; then
+    /usr/bin/udisks --inhibit -- start_anaconda "$@"
+else
+    start_anaconda "$@"
+fi
+
+if [ -e /tmp/updates.img ]; then rm /tmp/updates.img; fi
+
+rm -f /dev/.in_sysinit 2>/dev/null
+
+if [ -n "$current" ]; then
+    /usr/sbin/setenforce "$current"
+fi

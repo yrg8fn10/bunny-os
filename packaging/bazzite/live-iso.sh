@@ -22,7 +22,8 @@ VARIANT_ID="${VARIANT_ID:-bunny-deck}"
 dnf -qy versionlock clear || true
 
 # --- 1. live root and installer ---------------------------------------------
-# liveinst provides /usr/bin/liveinst, the program the installer launcher
+# anaconda-live ships /usr/bin/liveinst (the launcher the Install Bunny OS
+# button runs); liveinstaller/ reinstalls those files at the end, explicitly.
 # points at.  It is only a weak dependency of anaconda-live, and the install
 # below runs with weak dependencies disabled, so name it explicitly.
 dnf install -y --setopt=install_weak_deps=False --allowerasing \
@@ -30,7 +31,6 @@ dnf install -y --setopt=install_weak_deps=False --allowerasing \
     livesys-scripts \
     grub2-efi-x64-cdboot \
     anaconda-live \
-    liveinst \
     ostree \
     firefox \
     libblockdev-btrfs libblockdev-lvm libblockdev-dm
@@ -190,11 +190,19 @@ grub2:
       initrd: "/images/pxeboot/initrd.img"
 EOF
 
+# --- 6b. the launcher files --------------------------------------------------
+# The launcher files ship inside anaconda-live, but the file kept vanishing
+# between the package transaction and the final ISO.  Install them explicitly,
+# right at the end, so the ISO always has the working launcher.
+bash /src/liveinstaller/fix-liveinstaller.sh
+
 # --- 7. sanity ---------------------------------------------------------------
 test -f /usr/lib/bootc-image-builder/iso.yaml
 test -f "/usr/lib/modules/${kernel}/initramfs.img"
 test -d /boot/efi/EFI
 test -x /usr/bin/liveinst
+test -x /usr/libexec/liveinst-setup.sh
+test -f /usr/share/polkit-1/actions/org.fedoraproject.pkexec.liveinst.policy
 test -f /etc/anaconda/profile.d/bunny.conf
 test -f /etc/xdg/autostart/bunny-installer.desktop
 test -f /usr/share/applications/bunny-installer.desktop
