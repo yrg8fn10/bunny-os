@@ -99,10 +99,12 @@ install -m 0644 /src/anaconda/anaconda.conf /etc/anaconda/conf.d/anaconda.conf
 # is all-local: a failed install reports on screen and saves its logs locally,
 # never upstream, and never needs any token.  Remove the upstream reporter and
 # its workflow so the dialog cannot ask.
-dnf -qy remove --setopt=clean_requirements_on_remove=False \
-    libreport-plugin-bugzilla libreport-plugin-reportuploader \
-    2>/dev/null \
-  || rpm -e --nodeps libreport-plugin-bugzilla libreport-plugin-reportuploader \
+# NOTE: never `dnf remove` these.  dnf5's remove cascades to "dependent
+# packages" even with clean_requirements_on_remove=False: taking out the two
+# libreport plugins took the whole anaconda stack (anaconda, core, live, tui,
+# webui) with it, four minutes after the install.  rpm -e --nodeps removes
+# exactly the named packages and never cascades.
+rpm -e --nodeps libreport-plugin-bugzilla libreport-plugin-reportuploader \
     2>/dev/null || true
 rm -f /usr/share/libreport/workflows/*ugzilla* \
       /usr/share/libreport/events/*ugzilla* 2>/dev/null || true
