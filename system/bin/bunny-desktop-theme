@@ -9,7 +9,9 @@
 # =============================================================================
 set -uo pipefail
 
-WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-glow.png"
+# Preferred order: the approved pastel desktop art first, then the older set.
+WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-desktop.png"
+[[ -f "${WALLPAPER}" ]] || WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-glow.png"
 [[ -f "${WALLPAPER}" ]] || WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-meadow.png"
 ACCENT="255,179,217"
 STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny"
@@ -24,6 +26,9 @@ log() {
 }
 
 [[ -f "${WALLPAPER}" ]] || { log "wallpaper missing at ${WALLPAPER}"; exit 0; }
+
+# Stage the CSS Loader (Decky) theme so Game Mode can pick it up when Decky is on.
+command -v /usr/bin/bunny-decky-theme >/dev/null 2>&1 && /usr/bin/bunny-decky-theme || true
 
 applied=0
 if command -v plasma-apply-wallpaperimage >/dev/null 2>&1; then

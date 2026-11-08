@@ -81,6 +81,8 @@ find "${STAGE}/agent" -type f -name '*.pyc' -delete 2>/dev/null || true
 mkdir -p "${STAGE}/wallpaper"
 [[ -f "${ROOT}/assets/wallpaper/bunny-glow.png" ]] || die "missing ${ROOT}/assets/wallpaper/bunny-glow.png"
 cp -a "${ROOT}/assets/wallpaper/bunny-glow.png" "${STAGE}/wallpaper/bunny-glow.png"
+[[ -f "${ROOT}/assets/wallpaper/bunny-desktop.png" ]] && cp -a "${ROOT}/assets/wallpaper/bunny-desktop.png" "${STAGE}/wallpaper/bunny-desktop.png"
+[[ -f "${ROOT}/assets/wallpaper/bunny-game-mode.png" ]] && cp -a "${ROOT}/assets/wallpaper/bunny-game-mode.png" "${STAGE}/wallpaper/bunny-game-mode.png"
 
 # --- the neural voice (Piper, bundled so Bun Bun sounds human out of the box) ---
 #  Pinned upstream URLs + sha256: the model ships as bunny-default.onnx, the key

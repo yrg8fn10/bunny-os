@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# bunny-decky-theme — place the bundled CSS Loader theme where Decky Loader
+# looks for it ($HOME/homebrew/themes/bunny-cute). Best effort: Decky may not
+# be installed yet; the theme just waits there until it is.
+set -uo pipefail
+SRC="/usr/share/bunny-os/decky-theme/bunny-cute"
+DEST="${HOME:-/home/deck}/homebrew/themes/bunny-cute"
+LOG="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny/decky-theme.log"
+[[ -d "${SRC}" ]] || exit 0
+mkdir -p "$(dirname "${DEST}")" 2>/dev/null || true
+cp -a "${SRC}/." "${DEST}/" 2>/dev/null || true
+printf '%s [decky-theme] placed theme at %s\n' "$(date -u +%FT%TZ)" "${DEST}" >> "${LOG}" 2>/dev/null || true

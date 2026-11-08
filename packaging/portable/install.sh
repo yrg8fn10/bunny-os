@@ -167,6 +167,14 @@ run install -d -m 0755 "${DESTDIR}/usr/share/backgrounds/bunny-os"
 if [[ -f "${HERE}/wallpaper/bunny-glow.png" ]]; then
   run install -m 0644 "${HERE}/wallpaper/bunny-glow.png" "${DESTDIR}/usr/share/backgrounds/bunny-os/bunny-glow.png"
   info "wallpaper: /usr/share/backgrounds/bunny-os/bunny-glow.png"
+fi
+if [[ -f "${HERE}/wallpaper/bunny-desktop.png" ]]; then
+  run install -m 0644 "${HERE}/wallpaper/bunny-desktop.png" "${DESTDIR}/usr/share/backgrounds/bunny-os/bunny-desktop.png"
+  info "wallpaper: /usr/share/backgrounds/bunny-os/bunny-desktop.png"
+fi
+if [[ -f "${HERE}/wallpaper/bunny-game-mode.png" ]]; then
+  run install -m 0644 "${HERE}/wallpaper/bunny-game-mode.png" "${DESTDIR}/usr/share/backgrounds/bunny-os/bunny-game-mode.png"
+  info "wallpaper: /usr/share/backgrounds/bunny-os/bunny-game-mode.png"
 else
   warn "wallpaper payload missing; the desktop keeps the host default"
 fi

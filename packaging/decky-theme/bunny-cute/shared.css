@@ -1,0 +1,34 @@
+/* Bunny OS Cute - pastel Game Mode theme for CSS Loader (Decky Loader).
+   Selectors are written defensively: anything Steam renames simply
+   stops matching, the UI never breaks. */
+
+/* Game Mode background: the bunny space wallpaper */
+:root {
+  --bunny-bg: url("./bunny-game-mode.png");
+}
+body {
+  background: var(--bunny-bg) center / cover no-repeat !important;
+}
+
+/* Pastel accent tint: soft pink highlights, cyan glows */
+:root {
+  --bunny-pink: #ffb3d9;
+  --bunny-cyan: #7de3f0;
+}
+.basicappdetailsappheader_WebBackground,
+.appdetailssection_Background,
+[class*="basicappdetailsappheader"] {
+  background: linear-gradient(180deg, rgba(255,179,217,0.16), rgba(125,227,240,0.10) 60%, transparent) !important;
+}
+
+/* Rounded, friendly corners on the main containers */
+[class*="gamepadhome_HomeContainer"],
+[class*="appdetails_Backdrop"],
+[class*="gamemenu_Container"] {
+  border-radius: 18px !important;
+}
+
+/* Softer panel shadows so the wallpaper shows through */
+[class*="Panel_Section"], [class*="quickaccess"] {
+  box-shadow: 0 6px 24px rgba(255,179,217,0.18) !important;
+}

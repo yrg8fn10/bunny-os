@@ -1,0 +1,10 @@
+{
+  "name": "Bunny OS Cute",
+  "author": "OSAGON Research",
+  "target": "SP",
+  "version": "1.0",
+  "patches": {
+    "Bunny Pastel UI": { "default": 1 }
+  },
+  "css": ["shared.css"]
+}
