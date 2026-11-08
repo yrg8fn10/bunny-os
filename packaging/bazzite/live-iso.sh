@@ -17,6 +17,21 @@ ISO_LABEL="${ISO_LABEL:-BunnyOS-Live}"
 PAYLOAD_TAG="${PAYLOAD_TAG:-localhost/bunny-deck:latest}"
 VARIANT_ID="${VARIANT_ID:-bunny-deck}"
 
+# --- 0. The /mnt symlink the uBlue base ships -------------------------------
+#  Bazzite (like every uBlue image) ships /mnt as a symlink to /var/mnt so
+#  mounts survive ostree rebases.  Inside the live installer that symlink
+#  breaks the payload step: Anaconda runs
+#      systemd-tmpfiles --create --boot --root=/mnt/sysroot --prefix=/var/home
+#  and systemd-tmpfiles resolves /mnt through the link in one of its checks and
+#  not the other, then refuses with "Path '/mnt/sysroot/var/home' is not under
+#  root" and exits 73 - the install dies right at the end.  secureblue PR 2808
+#  (merged Nov 6 2026, "remove unnecessary /mnt symlink from liveenv") fixed
+#  the identical failure by replacing the symlink with a real directory in
+#  their rootfs prep; get-aurora-dev/iso PR 109 and inffy/iso landed the same
+#  fix Nov 6-7.  Do the same here, before anything else touches /mnt.
+rm -f /mnt
+mkdir -m 0755 /mnt
+
 # Bazzite pins versions for its desktop.  Anaconda drags in newer ones and the
 # versionlocks turn that into an unreadable dependency error.
 dnf -qy versionlock clear || true
