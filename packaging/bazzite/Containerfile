@@ -40,6 +40,10 @@ RUN set -eux; \
     BUNNY_INSTALL_IMAGE=1 /tmp/bunny-os-portable-*/install.sh --prefix /usr; \
     rm -rf /tmp/bunny-os-portable*
 
+COPY decky-theme/ /usr/share/bunny-os/decky-theme/
+COPY bunny-decky-theme /usr/bin/bunny-decky-theme
+RUN chmod 0755 /usr/bin/bunny-decky-theme
+
 # The host's session, greeter and account stay Bazzite's. The wizard only
 # writes the marker and the network/time-zone settings.
 RUN set -eux; \
@@ -52,7 +56,7 @@ RUN set -eux; \
     test -f /usr/share/backgrounds/bunny-os/bunny-glow.png; \
     test -f /usr/share/backgrounds/bunny-os/bunny-desktop.png; \
     test -f /usr/share/backgrounds/bunny-os/bunny-game-mode.png; \
-    test -d /usr/share/bunny-os/decky-theme/bunny-cute;
+    test -d /usr/share/bunny-os/decky-theme/bunny-cute; \
     test -f /usr/share/applications/bunny-os.desktop; \
     test -f /usr/lib/systemd/user/bunny-bunbun.service; \
     test -x /usr/bin/piper; \
@@ -62,9 +66,6 @@ RUN set -eux; \
 # Bun Bun Plymouth theme, so booting into Gaming Mode shows the bunny, not
 # Bazzite's logo. The default.plymouth symlink lives in /usr, so the theme
 # survives rpm-ostree updates.
-COPY packaging/decky-theme/ /usr/share/bunny-os/decky-theme/
-COPY system/bin/bunny-decky-theme /usr/bin/bunny-decky-theme
-RUN chmod 0755 /usr/bin/bunny-decky-theme
 COPY plymouth-bunbun/ /tmp/bunny-branding/
 RUN set -eux; \
     install -d /usr/share/plymouth/themes/bunbun; \
