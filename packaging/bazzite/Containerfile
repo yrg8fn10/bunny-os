@@ -44,6 +44,22 @@ COPY decky-theme/ /usr/share/bunny-os/decky-theme/
 COPY bunny-decky-theme /usr/bin/bunny-decky-theme
 RUN chmod 0755 /usr/bin/bunny-decky-theme
 
+# Decky Loader + CSS Loader, baked in so the theme and plugins are there on
+# first boot and nobody installs anything by hand. The loader payload lives
+# under /usr (immutable, survives rpm-ostree updates); bunny-decky-init
+# (enabled below) copies it into the deck user's homebrew dir on the first
+# boot of an installed system and enables plugin_loader.
+COPY decky-bake/ /usr/share/bunny-os/decky/
+COPY decky-init/bunny-decky-init /usr/bin/bunny-decky-init
+COPY decky-init/bunny-decky-init.service /etc/systemd/system/bunny-decky-init.service
+RUN set -eux; \
+    chmod 0755 /usr/bin/bunny-decky-init; \
+    mkdir -p /etc/systemd/system/multi-user.target.wants; \
+    ln -sfn ../bunny-decky-init.service /etc/systemd/system/multi-user.target.wants/bunny-decky-init.service; \
+    test -x /usr/share/bunny-os/decky/PluginLoader; \
+    test -f /usr/share/bunny-os/decky/.loader.version; \
+    test -f /usr/share/bunny-os/decky/plugins/SDH-CssLoader/plugin.json
+
 # The host's session, greeter and account stay Bazzite's. The wizard only
 # writes the marker and the network/time-zone settings.
 RUN set -eux; \

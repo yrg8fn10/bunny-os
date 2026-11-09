@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# bunny-decky-init — first-boot installer for the Decky Loader baked into the
+# image. Decky lives in the deck user's homebrew dir at runtime (writable),
+# so the image carries the payload under /usr and this copies it into place
+# on the first boot of an installed system, then enables plugin_loader.
+# Best effort everywhere: if the deck user does not exist yet, exit 0 and let
+# the next boot retry.
+set -uo pipefail
+SRC="/usr/share/bunny-os/decky"
+DONE="/var/lib/bunny/decky-init.done"
+[[ -d /var/lib/bunny ]] || exit 0          # live installer env, not the deck image
+[[ -f "${DONE}" ]] && exit 0
+[[ -x "${SRC}/PluginLoader" ]] || exit 0
+USER_NAME="$(getent passwd | awk -F: '$3 >= 1000 && $6 ~ /^\/home\// {print $1; exit}')"
+[[ -n "${USER_NAME}" ]] || exit 0          # user not created yet; next boot retries
+USER_HOME="$(getent passwd "${USER_NAME}" | cut -d: -f6)"
+HB="${USER_HOME}/homebrew"
+install -d -o "${USER_NAME}" -g "${USER_NAME}" "${HB}/services" "${HB}/plugins"
+install -m 0755 "${SRC}/PluginLoader" "${HB}/services/PluginLoader"
+cp "${SRC}/.loader.version" "${HB}/services/.loader.version"
+cp -a "${SRC}/plugins/." "${HB}/plugins/"
+install -d -o "${USER_NAME}" -g "${USER_NAME}" "${USER_HOME}/.steam/steam"
+touch "${USER_HOME}/.steam/steam/.cef-enable-remote-debugging"
+sed "s|\\${HOMEBREW_FOLDER}|${HB}|g" "${SRC}/plugin_loader-release.service" \
+    > /etc/systemd/system/plugin_loader.service
+if command -v getenforce >/dev/null 2>&1 && getenforce 2>/dev/null | grep -q Enforcing; then
+    chcon -t bin_t "${HB}/services/PluginLoader" || true
+fi
+systemctl daemon-reload
+systemctl enable plugin_loader.service
+mkdir -p "$(dirname "${DONE}")"
+touch "${DONE}"
+systemctl start plugin_loader.service || true
+echo "decky-init: Decky Loader ready for ${USER_NAME} at ${HB}"
