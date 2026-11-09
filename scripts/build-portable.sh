@@ -131,7 +131,7 @@ VOICE_JSON_SHA256="a97e2ba653e9efcdc1bdcec64a398c8beb19ae5e8dfdbfe4ad6841983e56c
 command -v curl >/dev/null || die "curl is needed to fetch the voice"
 mkdir -p "${VOICE_CACHE}"
 sha_ok() { echo "$2  $1" | (cd "$(dirname "$1")" && sha256sum -c - >/dev/null 2>&1); }
-if [[ ! -f "${VOICE_CACHE}/piper" ]]; then
+if [[ ! -d "${VOICE_CACHE}/piper" ]]; then
   log_info "voice    fetching the Piper engine (pinned)"
   [[ -f "${VOICE_CACHE}/piper.tar.gz" ]] || curl -fL --retry 3 -o "${VOICE_CACHE}/piper.tar.gz" "${PIPER_URL}"
   sha_ok "${VOICE_CACHE}/piper.tar.gz" "${PIPER_SHA256}" || die "piper release checksum mismatch"
