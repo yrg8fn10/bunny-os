@@ -23,6 +23,7 @@ Valve kernel patches, no AUR" cannot both hold. SteamOS is not a theme on Arch:
 |---|---|---|
 | `holo` repo | Valve-built kernels, Mesa, gamescope-session-plus | requires Valve's repos and keys; breaks the stock-Arch rule |
 | A/B immutable image | read-only root + atomic updates (`steamos-update`) | needs an image-update service, not `pacman -Syu` |
+| Bun Bun payload channel | `bunny-update-payload` refreshes `/opt/bunbun` daily from a published manifest (version + sha256, rollback on a failed restart) | ships now; the full image channel can come later |
 | `gamescope-session-plus` | Valve's session manager + Steam Big Picture as the compositor client | AUR/Valve packaging |
 | `steam-jupiter` / `jupiter-*` | Deck-specific patches and firmware glue | not in Arch |
 

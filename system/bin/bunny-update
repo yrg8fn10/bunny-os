@@ -36,6 +36,22 @@ die() { printf '[bunny-update] ERROR: %s\n' "$*" >&2; exit 1; }
 
 [[ "${EUID}" -eq 0 ]] || die "must run as root"
 
+# --- 1. the Bun Bun payload channel --------------------------------------------
+# The immutable image itself has no update remote yet (docs/BAZZITE.md), but
+# everything that IS Bun Bun — the agent, bunhud, the voice — updates in place
+# from the payload channel below.  A failed check must never break the timer.
+PAYLOAD_UPDATER="${0%/*}/bunny-update-payload"
+if [[ -x "${PAYLOAD_UPDATER}" ]]; then
+  if (( CHECK_ONLY )); then
+    "${PAYLOAD_UPDATER}" --check || true
+  else
+    "${PAYLOAD_UPDATER}" --yes \
+      || log "payload update did not apply; keeping the running Bun Bun"
+  fi
+else
+  log "bunny-update-payload missing; skipping the Bun Bun payload update"
+fi
+
 if [[ -f /run/ostree-booted ]]; then
   log "image-based system detected (OSTree)"
   case "${CHANNEL}" in
@@ -53,11 +69,14 @@ if [[ -f /run/ostree-booted ]]; then
   fi
 
   if (( CHECK_ONLY )); then
-    ostree admin upgrade --preview
+    ostree admin upgrade --preview || log "image channel unreachable; payload update above is the channel for now"
     exit 0
   fi
-  ostree admin upgrade
-  log "new deployment staged; reboot to activate (old image kept for rollback)"
+  if ! ostree admin upgrade; then
+    log "image channel unreachable (docs/BAZZITE.md); the payload update above is the channel for now"
+  else
+    log "new deployment staged; reboot to activate (old image kept for rollback)"
+  fi
   exit 0
 fi
 

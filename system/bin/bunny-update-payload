@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""bunny-update-payload — self-update for the Bun Bun user-space tree.
+
+The Bunny OS core is an immutable image: a new *image* still means a new ISO.
+Everything that makes Bun Bun Bun Bun — the agent tree, the Game Mode
+presence layer, the voice — lives in writable locations (/opt/bunbun, /etc,
+/usr/local on OSTree, the portable prefix elsewhere).  This updater keeps
+THAT tree current from a published manifest, so a new Bun Bun release is a
+download, not a reflash.
+
+    bunny-update-payload --check          report only
+    bunny-update-payload --yes            fetch, verify, install, restart
+
+The channel manifest is a small JSON file:
+
+    {"version": "0.2.0-beta9-pre7", "sequence": 20261109,
+     "payload": {"name": "bunny-os-portable-0.2.0-beta9-pre7.tar.gz",
+                 "size": 123, "sha256": "…"}}
+
+Everything is a plain HTTPS download (no API keys, no cloud AI).  A failed
+check leaves the running install untouched; an install that cannot prove
+itself is rolled back before Bun Bun is restarted on the old tree.
+"""
+import argparse
+import hashlib
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.request
+from urllib.error import URLError
+
+DEFAULT_MANIFEST_URL = "https://archive.org/download/bun-bun-os-updates/MANIFEST.json"
+SETTINGS_PATH = "/etc/bunny/settings.json"
+BUILD_INFO_PATH = "/etc/bunny/build-info.json"
+
+# A pre-release token ranks BELOW a release: 0.2.0-beta9 beats 0.2.0-beta9-pre7.
+TOKEN_RANK = {"dev": 0, "pre": 1, "alpha": 2, "beta": 3, "rc": 4}
+RELEASE = (99, 0)
+
+
+def log(msg):
+    print("[bunny-update-payload] %s" % msg, flush=True)
+
+
+def parse_version(v):
+    v = v.strip().lower()
+    core, _, rest = v.partition("-")
+    try:
+        core_t = tuple(int(p) for p in core.split("."))
+    except ValueError:
+        raise ValueError("unreadable version %r" % v)
+    toks = []
+    for m in re.finditer(r"([a-z]+)(\d*)", rest):
+        toks.append((TOKEN_RANK.get(m.group(1), 0), int(m.group(2) or 0)))
+    return (core_t, toks)
+
+
+def version_cmp(a, b):
+    """-1 if a < b, 0 if equal, 1 if a > b.  Raises on unreadable versions."""
+    (ca, ta), (cb, tb) = parse_version(a), parse_version(b)
+    n = max(len(ca), len(cb))
+    ca_p = ca + (0,) * (n - len(ca))
+    cb_p = cb + (0,) * (n - len(cb))
+    if ca_p < cb_p:
+        return -1
+    if ca_p > cb_p:
+        return 1
+    i = 0
+    while True:
+        ra = ta[i] if i < len(ta) else RELEASE
+        rb = tb[i] if i < len(tb) else RELEASE
+        if ra != rb:
+            return -1 if ra < rb else 1
+        if i >= len(ta) and i >= len(tb):
+            return 0
+        i += 1
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("updates", {}) or {}
+    except Exception:
+        return {}
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def installed_version(opt_dir, etc_dir):
+    info = read_json(os.path.join(etc_dir, "build-info.json"), {})
+    v = info.get("version")
+    if v:
+        return str(v)
+    try:
+        with open(os.path.join(opt_dir, "VERSION"), "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return None
+
+
+def fetch(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "bunny-update-payload"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def download_file(url, dest, size, sha256, tries=4):
+    """Resume-capable download into dest.partial, verified against sha256."""
+    partial = dest + ".partial"
+    pos = os.path.getsize(partial) if os.path.exists(partial) else 0
+    for attempt in range(1, tries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "bunny-update-payload"})
+            if pos:
+                req.add_header("Range", "bytes=%d-" % pos)
+            with urllib.request.urlopen(req, timeout=120) as r:
+                # A server that ignores Range answers 200 with the whole file;
+                # then we must start over rather than append.
+                if pos and r.status != 206:
+                    pos = 0
+                h = hashlib.sha256()
+                mode = "ab" if pos else "wb"
+                if pos:
+                    with open(partial, "rb") as back:
+                        for chunk in iter(lambda: back.read(1 << 20), b""):
+                            h.update(chunk)
+                f = open(partial, mode)
+                try:
+                    done = False
+                    while not done:
+                        chunk = r.read(1 << 20)
+                        if not chunk:
+                            done = True
+                            break
+                        f.write(chunk)
+                        h.update(chunk)
+                        pos += len(chunk)
+                    if size and pos != size:
+                        raise RuntimeError("downloaded %d bytes, expected %d" % (pos, size))
+                finally:
+                    f.close()
+            if sha256 and h.hexdigest() != sha256:
+                log("checksum mismatch after download; restarting from zero")
+                pos = 0
+                os.remove(partial)
+                continue
+            os.replace(partial, dest)
+            return
+        except (URLError, OSError, IOError) as e:
+            log("download attempt %d failed: %r" % (attempt, e))
+            time.sleep(min(30, 5 * attempt))
+            pos = os.path.getsize(partial) if os.path.exists(partial) else 0
+    raise RuntimeError("download failed after %d attempts" % tries)
+
+
+def safe_extract(tar_path, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    with tarfile.open(tar_path, "r:gz") as t:
+        try:
+            t.extractall(dest_dir, filter="data")
+        except TypeError:  # python < 3.12 has no filter kwarg
+            t.extractall(dest_dir)
+    # The tarball wraps everything in one top-level directory.
+    entries = [e for e in os.listdir(dest_dir) if e != "."]
+    if len(entries) == 1 and os.path.isdir(os.path.join(dest_dir, entries[0])):
+        return os.path.join(dest_dir, entries[0])
+    return dest_dir
+
+
+def python_abi_tag():
+    impl = "cp%s%s" % (sys.version_info[0], sys.version_info[1])
+    return impl
+
+
+def pick_wheels(wheel_dir):
+    """Wheels installable by the running interpreter (cp-tagged or pure)."""
+    tag = python_abi_tag()
+    out = []
+    if not os.path.isdir(wheel_dir):
+        return out
+    for name in sorted(os.listdir(wheel_dir)):
+        if not name.endswith(".whl"):
+            continue
+        parts = name.split("-")
+        if len(parts) < 5:
+            continue
+        abi, plat = parts[3], parts[4]
+        if tag in parts[2] or parts[2] in ("py3", "py2.py3", "py3-none"):
+            if "linux" in plat or "any" in plat or "manylinux" in plat:
+                out.append(os.path.join(wheel_dir, name))
+    return out
+
+
+def install_pylibs(wheel_dir, pylibs_dir):
+    wheels = pick_wheels(wheel_dir)
+    if not wheels:
+        log("no matching wheels in payload; leaving existing pylibs alone")
+        return False
+    cmd = [sys.executable, "-m", "pip", "install", "--no-index",
+           "--find-links", wheel_dir, "--target", pylibs_dir,
+           "--upgrade", "--quiet", "pywayland==0.4.19"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode == 0:
+        return True
+    log("bundled wheels did not fit this python; falling back to PyPI")
+    cmd = [sys.executable, "-m", "pip", "install", "--only-binary=:all:",
+           "--target", pylibs_dir, "--upgrade", "--quiet", "pywayland==0.4.19"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        log("pylibs install failed: %s" % (r.stderr or r.stdout).strip()[:400])
+        return False
+    return True
+
+
+def desktop_sessions():
+    """(user, uid) pairs with a live systemd user session."""
+    out = []
+    for pw in pwd.getpwall():
+        if pw.pw_uid < 1000:
+            continue
+        runtime = "/run/user/%d" % pw.pw_uid
+        if os.path.isdir(runtime):
+            out.append((pw.pw_name, pw.pw_uid))
+    return out
+
+
+def probe_agent(url, tries=15):
+    for _ in range(tries):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:
+                if r.status == 200:
+                    return True
+        except Exception:
+            time.sleep(1)
+    return False
+
+
+def restart_services():
+    """Best-effort restart of the Bun Bun user services in every live session."""
+    restarted = False
+    for user, uid in desktop_sessions():
+        env = "XDG_RUNTIME_DIR=/run/user/%d" % uid
+        cmds = [
+            ["runuser", "-u", user, "--", "env", env, "systemctl", "--user", "daemon-reload"],
+            ["runuser", "-u", user, "--", "env", env, "systemctl", "--user", "restart",
+             "bunny-bunbun.service", "bunny-bunhud.service"],
+        ]
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            except Exception as e:
+                log("restart step failed for %s: %r" % (user, e))
+        restarted = True
+        log("restarted Bun Bun services for %s" % user)
+    return restarted
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Bun Bun payload self-updater")
+    ap.add_argument("--check", action="store_true", help="report only, change nothing")
+    ap.add_argument("--yes", action="store_true", help="apply without prompting (timer mode)")
+    ap.add_argument("--url", help="manifest URL (default: the published channel)")
+    ap.add_argument("--opt-dir", default="/opt/bunbun")
+    ap.add_argument("--etc-dir", default="/etc/bunny")
+    ap.add_argument("--state-dir", default="/var/lib/bunny/updates")
+    ap.add_argument("--bin-dir", default="/usr/local/bin")
+    ap.add_argument("--force", action="store_true", help="reinstall even if up to date")
+    ap.add_argument("--no-restart", action="store_true")
+    ap.add_argument("--no-pylibs", action="store_true")
+    ap.add_argument("--no-probe", action="store_true")
+    args = ap.parse_args()
+
+    upd = load_settings()
+    if not args.check and not upd.get("auto_check", True):
+        log("updates.auto_check is off in settings.json; skipping")
+        return 0
+    url = args.url or upd.get("manifest_url") or DEFAULT_MANIFEST_URL
+    manifest = read_json(os.path.join(args.state_dir, "manifest-cache.json"))
+    try:
+        raw = fetch(url)
+        manifest = json.loads(raw.decode("utf-8", "replace"))
+        os.makedirs(args.state_dir, exist_ok=True)
+        with open(os.path.join(args.state_dir, "manifest-cache.json"), "w") as f:
+            f.write(raw.decode("utf-8", "replace"))
+    except Exception as e:
+        log("could not read the manifest from %s: %r" % (url, e))
+        if args.check:
+            return 1
+    if not isinstance(manifest, dict) or "payload" not in manifest:
+        log("no usable manifest; nothing to do")
+        return 0
+    version = str(manifest.get("version", "")).strip()
+    payload = manifest["payload"]
+    if not version or not payload.get("name") or not payload.get("sha256"):
+        log("manifest is missing version/payload fields; nothing to do")
+        return 0
+
+    cur = installed_version(args.opt_dir, args.etc_dir)
+    try:
+        newer = cur is None or version_cmp(version, cur) > 0
+    except ValueError:
+        newer = version != cur
+    if not newer and not args.force:
+        log("up to date (%s)" % (cur or "unknown"))
+        return 0
+    if args.check:
+        log("update available: %s -> %s" % (cur or "unknown", version))
+        return 0
+    if not args.yes:
+        log("update available: %s -> %s (run with --yes to apply)"
+            % (cur or "unknown", version))
+        return 0
+
+    log("updating %s -> %s" % (cur or "unknown", version))
+    os.makedirs(args.state_dir, exist_ok=True)
+    archive = os.path.join(args.state_dir, payload["name"])
+    dl_url = url.rsplit("/", 1)[0] + "/" + payload["name"]
+    download_file(dl_url, archive, int(payload.get("size") or 0), payload["sha256"])
+
+    stage_root = os.path.join(args.state_dir, "stage")
+    shutil.rmtree(stage_root, ignore_errors=True)
+    top = safe_extract(archive, stage_root)
+
+    # Verify the staged tree before anything moves.
+    staged_version = open(os.path.join(top, "VERSION"), encoding="utf-8").read().strip() \
+        if os.path.exists(os.path.join(top, "VERSION")) else ""
+    if staged_version != version:
+        log("staged tree is %r, manifest says %r; aborting" % (staged_version, version))
+        return 1
+    agent = os.path.join(top, "agent")
+    if not os.path.isfile(os.path.join(agent, "bunbun", "service.py")):
+        log("staged payload is missing the agent; aborting")
+        return 1
+
+    # Snapshot the current tree for rollback.
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    backup = os.path.join(args.state_dir, "backup-%s-%s" % (cur or "unknown", stamp))
+    os.makedirs(backup, exist_ok=True)
+    moves = [("agent", args.opt_dir), ("bunhud", os.path.join(args.opt_dir, "tools", "bunhud"))]
+    old_running = False
+    try:
+        for name, dst in moves:
+            src = os.path.join(top, name)
+            if not os.path.isdir(src):
+                continue
+            if os.path.isdir(dst):
+                old_running = old_running or os.path.isdir(os.path.join(dst, "bunbun"))
+                shutil.move(dst, os.path.join(backup, name.replace("/", "_")))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+    except Exception as e:
+        log("swap failed before any restart: %r" % e)
+        return 1
+
+    # Voice: replace only when the payload carries a new one.
+    vsrc = os.path.join(top, "voice")
+    if os.path.isdir(vsrc):
+        vdst = args.opt_dir if os.path.isdir(os.path.join(args.opt_dir, "voice")) else None
+        if vdst is None:
+            for cand in ("/usr/local/lib/bunny/voice", os.path.join(args.opt_dir, "voice")):
+                if os.path.isdir(cand):
+                    vdst = cand
+                    break
+        if vdst:
+            try:
+                shutil.rmtree(vdst)
+                shutil.copytree(vsrc, vdst)
+                log("voice updated")
+            except Exception as e:
+                log("voice update skipped: %r" % e)
+
+    # bunhud runtime wheels land next to the code, importable from /opt.
+    if not args.no_pylibs:
+        wheel_dir = os.path.join(args.opt_dir, "tools", "bunhud", "wheels")
+        if os.path.isdir(wheel_dir):
+            pylibs = os.path.join(args.opt_dir, "tools", "bunhud", "pylibs")
+            if install_pylibs(wheel_dir, pylibs):
+                dropin_dir = os.path.join(args.etc_dir, "..", "systemd", "user",
+                                          "bunny-bunhud.service.d")
+                try:
+                    os.makedirs(dropin_dir, exist_ok=True)
+                    with open(os.path.join(dropin_dir, "10-pylibs.conf"), "w") as f:
+                        f.write("[Service]\nEnvironment=PYTHONPATH=%s\n" % pylibs)
+                except Exception:
+                    pass
+
+    # Version metadata and the launcher symlink.
+    try:
+        os.makedirs(args.etc_dir, exist_ok=True)
+        info = read_json(os.path.join(args.etc_dir, "build-info.json"), {}) or {}
+        info.update({"version": version,
+                     "build_id": str(manifest.get("sequence", stamp)),
+                     "channel": upd.get("channel", "stable"),
+                     "updated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        with open(os.path.join(args.etc_dir, "build-info.json"), "w") as f:
+            json.dump(info, f, indent=2, sort_keys=True)
+            f.write("\n")
+    except Exception as e:
+        log("build-info update failed: %r" % e)
+    cli = os.path.join(args.opt_dir, "bin", "bunbun-cli")
+    if os.path.isfile(cli):
+        try:
+            os.chmod(cli, 0o755)
+            dst = os.path.join(args.bin_dir, "bunbun")
+            os.makedirs(args.bin_dir, exist_ok=True)
+            if os.path.islink(dst):
+                os.unlink(dst)
+            elif os.path.exists(dst):
+                os.unlink(dst)
+            os.symlink(cli, dst)
+        except Exception as e:
+            log("launcher symlink update failed: %r" % e)
+
+    # Restart Bun Bun on the new tree; roll back if she cannot come up.
+    ok = True
+    if not args.no_restart:
+        old_running = old_running and not args.no_restart
+        restart_services()
+        if old_running and not args.no_probe:
+            probe = "http://127.0.0.1:8422/v1/health"
+            if not probe_agent(probe):
+                log("Bun Bun did not come back healthy; rolling back to %s" % (cur or "unknown"))
+                for name, dst in moves:
+                    bdst = os.path.join(backup, name.replace("/", "_"))
+                    if os.path.isdir(bdst):
+                        shutil.rmtree(dst, ignore_errors=True)
+                        shutil.move(bdst, dst)
+                restart_services()
+                ok = False
+    if ok:
+        with open(os.path.join(args.state_dir, "update-state.json"), "w") as f:
+            json.dump({"installed_version": version,
+                       "previous_version": cur,
+                       "installed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, f,
+                      indent=2, sort_keys=True)
+            f.write("\n")
+        log("Bun Bun is now on %s" % version)
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

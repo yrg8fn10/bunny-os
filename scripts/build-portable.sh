@@ -77,6 +77,36 @@ find "${STAGE}/agent" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/de
 find "${STAGE}/agent" -type f -name '*.pyc' -delete 2>/dev/null || true
 [[ -f "${STAGE}/agent/bunbun/service.py" ]] || die "agent engine missing bunbun/service.py"
 
+# --- the Game Mode presence layer (bunhud) -------------------------------------
+mkdir -p "${STAGE}/bunhud"
+cp -a "${ROOT}/tools/bunhud/." "${STAGE}/bunhud/"
+find "${STAGE}/bunhud" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find "${STAGE}/bunhud" -type f -name '*.pyc' -delete 2>/dev/null || true
+[[ -f "${STAGE}/bunhud/bunhud.py" ]] || die "bunhud missing bunhud.py"
+[[ -f "${STAGE}/bunhud/assets/bunhud-placeholder.png" ]] || die "bunhud missing placeholder sprite"
+
+# The payload carries pywayland wheels for the python builds a Deck might run,
+# so a payload update can rebuild bunhud's pylibs without reaching PyPI.  Best
+# effort per tag: the updater falls back to PyPI for whatever is missing.
+mkdir -p "${STAGE}/bunhud/wheels"
+if command -v pip3 >/dev/null 2>&1; then
+  for v in 310 311 312 313 314; do
+    pip3 download --only-binary=:all: --no-deps --no-cache-dir -q \
+      --python-version "${v}" --implementation cp --abi "cp${v}" \
+      --platform manylinux_2_34_x86_64 \
+      -d "${STAGE}/bunhud/wheels" pywayland==0.4.19 >/dev/null 2>&1 \
+      || true
+  done
+  pip3 download --only-binary=:all: --no-deps --no-cache-dir -q \
+    --python-version 3 --platform any \
+    -d "${STAGE}/bunhud/wheels" pycparser >/dev/null 2>&1 || true
+  pip3 download --only-binary=:all: --no-deps --no-cache-dir -q \
+    --python-version 3 --platform manylinux_2_34_x86_64 --abi abi3 \
+    -d "${STAGE}/bunhud/wheels" cffi >/dev/null 2>&1 || true
+  ls "${STAGE}/bunhud/wheels" | head -1 >/dev/null 2>&1 \
+    || echo "  ! no wheels bundled; the updater will use PyPI" >&2
+fi
+
 # --- the desktop wallpaper ------------------------------------------------------
 mkdir -p "${STAGE}/wallpaper"
 [[ -f "${ROOT}/assets/wallpaper/bunny-glow.png" ]] || die "missing ${ROOT}/assets/wallpaper/bunny-glow.png"

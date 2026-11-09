@@ -43,6 +43,7 @@ REQUIRED = [
     "tools/setupd-smoke.py",
     "system/bin/bunny-recovery",
     "system/bin/bunny-update",
+    "system/bin/bunny-update-payload",
     "system/bin/bunny-health",
     "system/lib/bunny_sessiond.py",
     "system/lib/bunny_input_agent.py",

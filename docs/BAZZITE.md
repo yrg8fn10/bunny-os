@@ -198,9 +198,14 @@ silently alter the image:
   medium needs **Secure Boot disabled** (the Deck ships that way). Bazzite's own
   ISO swaps in a Fedora-signed kernel for Secure Boot machines; this one does
   not.
-- **No update channel yet.** The installed system's container reference points
-  at the local image, so `rpm-ostree upgrade` has nowhere to pull from. A new
-  Bunny OS release means a new ISO.
+- **Image updates still need a reflash.** The installed system's container
+  reference points at the local image, so `rpm-ostree upgrade` has nowhere to
+  pull from; a new *image* still means a new ISO. The Bun Bun payload is the
+  exception: `bunny-update` runs `bunny-update-payload` daily, which pulls the
+  latest manifest from the payload channel and self-updates the agent,
+  bunhud and the voice in place (rollback included). Set `updates.auto_check`
+  to false in `/etc/bunny/settings.json` to turn it off, or point
+  `updates.manifest_url` somewhere else for testing.
 - **No dual boot.** Installing replaces what is on the internal drive. Use a
   spare SSD or back up first.
 

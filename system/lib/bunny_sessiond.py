@@ -247,6 +247,7 @@ SPEC: dict[str, Callable[[Any], Any]] = {
     "ai.kid_safe": Bool(),
     "updates.channel": Enum(("stable", "beta", "dev")),
     "updates.auto_check": Bool(),
+    "updates.manifest_url": Str(""),
     "privacy.local_only": Bool(),
     "privacy.telemetry": Bool(),
 }
