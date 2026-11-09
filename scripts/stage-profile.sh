@@ -158,6 +158,9 @@ find "${AIR}/usr/local/bin" -type f -exec chmod 0755 {} +
 log_debug "vendoring bunbun"
 mkdir -p "${AIR}/opt/bunbun"
 cp -a "${ROOT}/bunbun/." "${AIR}/opt/bunbun/"
+# bunhud: Game Mode presence layer (layer-shell overlay daemon)
+mkdir -p "${AIR}/opt/bunbun/tools/bunhud"
+cp -a "${ROOT}/tools/bunhud/." "${AIR}/opt/bunbun/tools/bunhud/"
 rm -rf "${AIR}/opt/bunbun/tests" \
        "${AIR}/opt/bunbun/__pycache__" \
        "${AIR}/opt/bunbun/.venv"
@@ -283,6 +286,8 @@ chmod 0644 "${AIR}/etc/bunny/version"
   || die "staging incomplete: panel UI missing"
 [[ -f "${AIR}/opt/bunbun/bunbun/service.py" ]] \
   || die "staging incomplete: bunbun service missing"
+[[ -f "${AIR}/opt/bunbun/tools/bunhud/bunhud.py" ]] \
+  || die "staging incomplete: bunhud presence layer missing"
 [[ -f "${AIR}/etc/bunny/target" ]] \
   || die "staging incomplete: target marker missing"
 

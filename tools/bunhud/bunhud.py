@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import queue
 import os
 import select
 import socket
@@ -53,20 +54,32 @@ def sprite_to_argb(img) -> bytes:
     the alpha value before packing. This keeps her edges clean against
     whatever game is running underneath.
     """
-    import numpy as np
-
     img = img.convert("RGBA")
-    h, w = img.size[1], img.size[0]
-    arr = np.frombuffer(img.tobytes(), dtype=np.uint8).reshape(h, w, 4)
-    a = arr[..., 3].astype(np.uint32)
-    rgb = arr[..., :3].astype(np.uint32)
-    prem = (rgb * a[..., None] + 127) // 255
-    out = np.empty((h, w, 4), dtype=np.uint8)
-    out[..., 0] = prem[..., 2]  # B
-    out[..., 1] = prem[..., 1]  # G
-    out[..., 2] = prem[..., 0]  # R
-    out[..., 3] = a
-    return out.tobytes(), w, h
+    w, h = img.size
+    raw = img.tobytes()
+    try:
+        import numpy as np
+
+        arr = np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
+        a = arr[..., 3].astype(np.uint32)
+        rgb = arr[..., :3].astype(np.uint32)
+        prem = (rgb * a[..., None] + 127) // 255
+        out = np.empty((h, w, 4), dtype=np.uint8)
+        out[..., 0] = prem[..., 2]  # B
+        out[..., 1] = prem[..., 1]  # G
+        out[..., 2] = prem[..., 0]  # R
+        out[..., 3] = a
+        return out.tobytes(), w, h
+    except ImportError:
+        # Pure-Python path: fine for sprite-sized images, no numpy needed.
+        out = bytearray(len(raw))
+        for i in range(0, len(raw), 4):
+            a = raw[i + 3]
+            out[i] = raw[i + 2] * a // 255      # B
+            out[i + 1] = raw[i + 1] * a // 255  # G
+            out[i + 2] = raw[i] * a // 255      # R
+            out[i + 3] = a
+        return bytes(out), w, h
 
 
 def load_sprite(path: str):
@@ -77,10 +90,15 @@ def load_sprite(path: str):
 
 
 class Bunhud:
-    def __init__(self, sprite_path: str, corner: str, scale: int):
+    def __init__(self, sprite_path: str, corner: str, scale: int, mam_host: str | None = None, mam_port: int = 8422):
         self.sprite_path = sprite_path
         self.corner = corner if corner in ANCHORS else "bottom-left"
         self.scale = scale
+        # MAM hookup: the companion service's bus drives show/hide.
+        self.mam_host = mam_host
+        self.mam_port = mam_port
+        self.mam_queue: "queue.Queue[str]" = queue.Queue(maxsize=16)
+        self.mam_bridge = None
         self.buffer = None
         self.surface = None
         self.layer_surface = None
@@ -145,6 +163,11 @@ class Bunhud:
             self.display.disconnect()
             return 1
         self.show()
+        if self.mam_host:
+            from mam_bridge import MamBridge
+
+            self.mam_bridge = MamBridge(self.mam_queue, self.mam_host, self.mam_port)
+            self.mam_bridge.start()
         return self.loop()
 
     def on_configure(self, _p, serial, width, height):
@@ -186,6 +209,7 @@ class Bunhud:
         try:
             while running:
                 self.display.dispatch()
+                self.drain_mam()
                 if not self.serve_control():
                     running = False
                 if fd is not None:
@@ -215,6 +239,17 @@ class Bunhud:
         self.control_path = path
         self.listener = s
         return s
+
+    def drain_mam(self) -> None:
+        while True:
+            try:
+                command = self.mam_queue.get_nowait()
+            except queue.Empty:
+                return
+            if command == "show":
+                self.show()
+            elif command == "hide":
+                self.hide()
 
     def serve_control(self) -> bool:
         """One line per client: show, hide, ping, quit."""
@@ -253,8 +288,21 @@ def main() -> int:
         help="screen corner to sit in",
     )
     parser.add_argument("--scale", type=int, default=1, help="integer sprite scale")
+    parser.add_argument(
+        "--mam",
+        action="store_true",
+        help="listen to the Bun Bun companion service's MAM event stream",
+    )
+    parser.add_argument("--mam-host", default="127.0.0.1")
+    parser.add_argument("--mam-port", type=int, default=8422)
     args = parser.parse_args()
-    hud = Bunhud(args.sprite, args.corner, args.scale)
+    hud = Bunhud(
+        args.sprite,
+        args.corner,
+        args.scale,
+        mam_host=args.mam_host if args.mam else None,
+        mam_port=args.mam_port,
+    )
     return hud.run()
 
 
