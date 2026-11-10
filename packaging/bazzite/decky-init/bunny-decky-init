@@ -1,34 +1,76 @@
 #!/usr/bin/env bash
-# bunny-decky-init — first-boot installer for the Decky Loader baked into the
-# image. Decky lives in the deck user's homebrew dir at runtime (writable),
-# so the image carries the payload under /usr and this copies it into place
-# on the first boot of an installed system, then enables plugin_loader.
-# Best effort everywhere: if the deck user does not exist yet, exit 0 and let
-# the next boot retry.
+# bunny-decky-init — post-setup installer for Decky Loader. Since pre9 the ISO
+# does NOT bake the loader in: the image carries only the payload digest, and
+# this downloads the payload from the pinned update-channel URL and installs it
+# once the first-boot wizard is finished and Steam's own data exists, so
+# nothing races the Steam first-run setup ("couldn't set up steam data").
+# Best effort everywhere: any early exit leaves the retry to a later boot, and
+# the setup wizard kicks this service when it finishes.
 set -uo pipefail
-SRC="/usr/share/bunny-os/decky"
+PAYLOAD_URL="https://archive.org/download/bun-bun-os-updates/decky-loader-v3.3.1.tar.gz"
+DIGEST_FILE="/usr/share/bunny-os/decky-payload.sha256"
+SRC="/var/lib/bunny/decky"
 DONE="/var/lib/bunny/decky-init.done"
+MARKER="/var/lib/bunny/.oobe-done"
+
 [[ -d /var/lib/bunny ]] || exit 0          # live installer env, not the deck image
 [[ -f "${DONE}" ]] && exit 0
-[[ -x "${SRC}/PluginLoader" ]] || exit 0
+[[ -f "${MARKER}" ]] || exit 0             # wizard not finished; the wizard kicks us
+[[ -f "${DIGEST_FILE}" ]] || exit 0
+
 USER_NAME="$(getent passwd | awk -F: '$3 >= 1000 && $6 ~ /^\/home\// {print $1; exit}')"
 [[ -n "${USER_NAME}" ]] || exit 0          # user not created yet; next boot retries
 USER_HOME="$(getent passwd "${USER_NAME}" | cut -d: -f6)"
+
+# Steam's own first-run bootstrap has to have created its data before we touch
+# anything near it. If it never shows up we exit and a later boot retries.
+for _ in $(seq 1 60); do
+    [[ -d "${USER_HOME}/.steam/steam" || -d "${USER_HOME}/.local/share/Steam" ]] && break
+    sleep 30
+done
+[[ -d "${USER_HOME}/.steam/steam" || -d "${USER_HOME}/.local/share/Steam" ]] || exit 0
+
+# Download + verify the payload (one retry here; a later boot retries again).
+PAYLOAD="/var/lib/bunny/decky-payload.tar.gz"
+EXPECTED="$(cut -d' ' -f1 "${DIGEST_FILE}")"
+rm -f "${PAYLOAD}"
+for _attempt in 1 2 3; do
+    curl -fsSL --retry 3 --retry-delay 5 -o "${PAYLOAD}" "${PAYLOAD_URL}" || { sleep 20; continue; }
+    echo "${EXPECTED}  ${PAYLOAD}" | sha256sum -c --strict >/dev/null 2>&1 && break
+    rm -f "${PAYLOAD}"; sleep 20
+done
+[[ -s "${PAYLOAD}" ]] || exit 0
+rm -rf "${SRC}"
+mkdir -p "${SRC}"
+tar -xzf "${PAYLOAD}" -C "${SRC}"
+[[ -x "${SRC}/PluginLoader" ]] || exit 0
+
 HB="${USER_HOME}/homebrew"
 install -d -o "${USER_NAME}" -g "${USER_NAME}" "${HB}/services" "${HB}/plugins"
 install -m 0755 "${SRC}/PluginLoader" "${HB}/services/PluginLoader"
 cp "${SRC}/.loader.version" "${HB}/services/.loader.version"
 cp -a "${SRC}/plugins/." "${HB}/plugins/"
-install -d -o "${USER_NAME}" -g "${USER_NAME}" "${USER_HOME}/.steam/steam"
-touch "${USER_HOME}/.steam/steam/.cef-enable-remote-debugging"
-sed "s|\\${HOMEBREW_FOLDER}|${HB}|g" "${SRC}/plugin_loader-release.service" \
-    > /etc/systemd/system/plugin_loader.service
 if command -v getenforce >/dev/null 2>&1 && getenforce 2>/dev/null | grep -q Enforcing; then
     chcon -t bin_t "${HB}/services/PluginLoader" || true
 fi
-systemctl daemon-reload
-systemctl enable plugin_loader.service
+
+# plugin_loader is a user unit, the way upstream ships it; --global enables it
+# for every user's session without needing the user bus.
+install -m 0644 "${SRC}/plugin_loader-release.service" /etc/systemd/user/plugin_loader.service
+sed -i "s|\${HOMEBREW_FOLDER}|${HB}|g" /etc/systemd/user/plugin_loader.service
+systemctl --global enable plugin_loader.service || true
+
+# Remote-debugging marker: only into a Steam dir Steam itself created.
+[[ -d "${USER_HOME}/.steam/steam" ]] && touch "${USER_HOME}/.steam/steam/.cef-enable-remote-debugging"
+
+UID_NUM="$(id -u "${USER_NAME}")"
+if [[ -d "/run/user/${UID_NUM}" ]]; then
+    runuser -u "${USER_NAME}" -- env XDG_RUNTIME_DIR="/run/user/${UID_NUM}" \
+        systemctl --user daemon-reload 2>/dev/null || true
+    runuser -u "${USER_NAME}" -- env XDG_RUNTIME_DIR="/run/user/${UID_NUM}" \
+        systemctl --user start plugin_loader.service 2>/dev/null || true
+fi
+
 mkdir -p "$(dirname "${DONE}")"
 touch "${DONE}"
-systemctl start plugin_loader.service || true
 echo "decky-init: Decky Loader ready for ${USER_NAME} at ${HB}"

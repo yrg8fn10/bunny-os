@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# fetch-decky.sh — download pinned Decky Loader + CSS Loader releases into
-# packaging/bazzite/decky-bake/ so the image build bakes them in. Runs in CI
-# (has network) before the payload image is built; the ISO itself installs
-# offline. Pinned so upstream releases cannot change an ISO under us.
+# fetch-decky.sh — build the Decky Loader + CSS Loader payload tarball for the
+# Bun Bun OS update channel. Since pre9 the ISO does NOT bake the loader in:
+# the image carries only the payload digest (packaging/bazzite/decky-payload.sha256)
+# and bunny-decky-init downloads the payload from the pinned channel URL once
+# first-boot setup is done. This script is the one place that builds that
+# payload from the pinned upstream releases; CI never runs it.
 set -euo pipefail
 DECKY_VER="v3.3.1"
 CSS_VER="v2.1.2"
-OUT="$(dirname "$0")/../packaging/bazzite/decky-bake"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PKG="$HERE/../packaging/bazzite"
+OUT="${PKG}/decky-payload"
 
 case "$(uname -m)" in
     aarch64|arm64) DECKY_ASSET="PluginLoader-arm64" ;;
     *)             DECKY_ASSET="PluginLoader" ;;
 esac
 
+rm -rf "${OUT:?}/"* 2>/dev/null || true
 mkdir -p "${OUT}/plugins"
 curl -fsSL "https://github.com/SteamDeckHomebrew/decky-loader/releases/download/${DECKY_VER}/${DECKY_ASSET}" \
     -o "${OUT}/PluginLoader"
@@ -34,5 +39,15 @@ rm -rf "${OUT}/plugins/SDH-CssLoader"
 mv "${SRC}" "${OUT}/plugins/SDH-CssLoader"
 
 test -x "${OUT}/PluginLoader"
+test -f "${OUT}/.loader.version"
+test -s "${OUT}/plugin_loader-release.service"
 test -d "${OUT}/plugins/SDH-CssLoader"
-echo "decky-bake ready: $(cat "${OUT}/.loader.version") + CSS Loader ${CSS_VER} ($(du -sh "${OUT}" | cut -f1))"
+
+# Deterministic tarball (sorted names, fixed owner/mtime) so the digest in
+# decky-payload.sha256 stays meaningful across rebuilds.
+PAYLOAD_TARBALL="${PKG}/decky-loader-${DECKY_VER}.tar.gz"
+tar --sort=name --owner=0 --group=0 --numeric-owner \
+    --mtime='UTC 2026-11-10' -czf "${PAYLOAD_TARBALL}" -C "${OUT}" .
+(cd "${PKG}" && sha256sum "$(basename "${PAYLOAD_TARBALL}")" > "$(basename "${PAYLOAD_TARBALL}").sha256")
+echo "decky payload ready: ${PAYLOAD_TARBALL} ($(du -sh "${PAYLOAD_TARBALL}" | cut -f1))"
+cat "${PAYLOAD_TARBALL}.sha256"

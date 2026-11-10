@@ -153,13 +153,6 @@ jobs:
           cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
           ls -lh packaging/bazzite/bunny-os-portable.tar.gz
 
-      - name: Fetch Decky Loader and CSS Loader (pinned)
-        run: |
-          set -euo pipefail
-          bash scripts/fetch-decky.sh
-          test -x packaging/bazzite/decky-bake/PluginLoader
-          test -f packaging/bazzite/decky-bake/plugins/SDH-CssLoader/plugin.json
-
       - name: Build the Bun Bun OS payload image
         run: |
           set -euo pipefail

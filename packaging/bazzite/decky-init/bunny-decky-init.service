@@ -1,10 +1,11 @@
 [Unit]
-Description=Bunny OS: install the baked-in Decky Loader on first boot
+Description=Bunny OS: set up Decky Loader after first-boot setup
 After=local-fs.target
 ConditionPathExists=!/var/lib/bunny/decky-init.done
 
 [Service]
 Type=oneshot
+TimeoutStartSec=0
 ExecStart=/usr/bin/bunny-decky-init
 RemainAfterExit=yes
 

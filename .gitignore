@@ -33,3 +33,6 @@ Thumbs.db
 .idea/
 .vscode/
 packaging/bazzite/decky-bake/
+packaging/bazzite/decky-payload/
+packaging/bazzite/decky-loader-v*.tar.gz
+packaging/bazzite/decky-loader-v*.tar.gz.sha256

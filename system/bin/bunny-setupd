@@ -542,6 +542,17 @@ class SetupService:
             for bootstrap in BOOTSTRAP_USERS:
                 if self._user_exists(bootstrap) and bootstrap != target:
                     run(["usermod", "-L", "-s", "/usr/sbin/nologin", bootstrap], timeout=15)
+            # Ava's call for pre9: Decky setup starts from the wizard, not at
+            # boot. The unit is enabled anyway and self-heals on later boots;
+            # --no-block keeps finish() from waiting on the payload download.
+            try:
+                run(["systemctl", "reset-failed", "bunny-decky-init.service"], timeout=15)
+            except Exception:
+                LOG.debug("bunny-decky-init reset-failed skipped", exc_info=True)
+            try:
+                run(["systemctl", "start", "--no-block", "bunny-decky-init.service"], timeout=15)
+            except Exception:
+                LOG.warning("could not kick bunny-decky-init; it retries next boot", exc_info=True)
 
         self.write_dropin(target, session)
         return {"user": target, "session": session, "preview": self.preview()}
