@@ -2,9 +2,8 @@
   "name": "Bunny OS Cute",
   "author": "OSAGON Research",
   "target": "SP",
-  "version": "1.0",
-  "patches": {
-    "Bunny Pastel UI": { "default": 1 }
-  },
-  "css": ["shared.css"]
+  "manifest_version": 8,
+  "version": "v1.0",
+  "description": "Bun Bun's pastel Game Mode makeover: soft pink and cyan accents with the bunny space wallpaper.",
+  "inject": { "shared.css": ["SP"] }
 }

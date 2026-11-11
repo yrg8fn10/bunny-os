@@ -2,9 +2,10 @@
    Selectors are written defensively: anything Steam renames simply
    stops matching, the UI never breaks. */
 
-/* Game Mode background: the bunny space wallpaper */
+/* Game Mode background: the bunny space wallpaper.
+   Local theme files must be referenced through /themes_custom/<folder>. */
 :root {
-  --bunny-bg: url("./bunny-game-mode.png");
+  --bunny-bg: url("/themes_custom/bunny-cute/bunny-game-mode.png");
 }
 body {
   background: var(--bunny-bg) center / cover no-repeat !important;
