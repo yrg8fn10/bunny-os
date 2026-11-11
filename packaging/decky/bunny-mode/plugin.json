@@ -1,0 +1,8 @@
+{
+  "name": "Bunny Mode",
+  "author": "OSAGON Research",
+  "flags": [],
+  "api_version": 1,
+  "version": "0.1.0",
+  "description": "Bun Bun crosses between desktop mode and Game Mode. Watches the mode switch and flips the Bunny OS theme with her."
+}
