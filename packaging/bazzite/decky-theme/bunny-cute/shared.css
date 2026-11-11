@@ -1,31 +1,29 @@
 /* Bunny OS Cute - pastel Game Mode theme for CSS Loader (Decky Loader).
-   Selectors are written defensively: anything Steam renames simply
-   stops matching, the UI never breaks. */
+   Class names are substring-matched so Steam's hash suffixes don't break us. */
 
 /* Game Mode background: the bunny space wallpaper.
-   Local theme files must be referenced through /themes_custom/<folder>. */
-:root {
-  --bunny-bg: url("/themes_custom/bunny-cute/bunny-game-mode.png");
-}
+   A pastel gradient sits under it as fallback if the image ever fails. */
 body {
-  background: var(--bunny-bg) center / cover no-repeat !important;
+  background:
+    url("/themes_custom/bunny-cute/bunny-game-mode.png") center / cover no-repeat,
+    linear-gradient(160deg, #241633 0%, #3b1f47 55%, #14515e 100%) !important;
 }
 
-/* Pastel accent tint: soft pink highlights, cyan glows */
-:root {
-  --bunny-pink: #ffb3d9;
-  --bunny-cyan: #7de3f0;
+/* Let the wallpaper show through the home screen's own dark layers */
+[class*="gamepadhome_ScrollArea"],
+[class*="gamepadhome_TabbedContent"] {
+  background: transparent !important;
 }
-.basicappdetailsappheader_WebBackground,
-.appdetailssection_Background,
-[class*="basicappdetailsappheader"] {
+
+/* Pastel tint on the game detail pages: soft pink fading to cyan */
+[class*="basicappdetailsappheader"],
+[class*="appdetailssection_Background"] {
   background: linear-gradient(180deg, rgba(255,179,217,0.16), rgba(125,227,240,0.10) 60%, transparent) !important;
 }
 
-/* Rounded, friendly corners on the main containers */
-[class*="gamepadhome_HomeContainer"],
-[class*="appdetails_Backdrop"],
-[class*="gamemenu_Container"] {
+/* Friendly rounded corners on the recent-games hero and the play button */
+[class*="gamepadhomerecentgames_RecentGamesInnerContainer"],
+[class*="appdetailsplaysection_PlayBox"] {
   border-radius: 18px !important;
 }
 
