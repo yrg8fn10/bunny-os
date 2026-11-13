@@ -270,11 +270,18 @@ def restart_services():
 
 
 def install_extras(top):
-    """Best-effort delivery of the wallpapers and the Game Mode theme."""
-    try:
-        wdir = os.path.join(top, "wallpaper")
-        if os.path.isdir(wdir):
-            dst = "/usr/share/backgrounds/bunny-os"
+    """Best-effort delivery of the wallpapers and the Game Mode theme.
+
+    Bazzite keeps /usr read-only, so every system copy is best-effort and the
+    copies things actually read live in writable locations:
+      wallpapers -> /var/lib/bunny/os/wallpapers
+      theme      -> /home/<deck>/homebrew/themes/bunny-cute
+    Each piece is wrapped separately so one failure can never skip the rest.
+    """
+    wdir = os.path.join(top, "wallpaper")
+    if os.path.isdir(wdir):
+        try:
+            dst = "/var/lib/bunny/os/wallpapers"
             os.makedirs(dst, exist_ok=True)
             n = 0
             for name in sorted(os.listdir(wdir)):
@@ -284,31 +291,47 @@ def install_extras(top):
                     n += 1
             if n:
                 log("wallpaper files refreshed (%d)" % n)
-        tsrc = os.path.join(top, "decky-theme", "bunny-cute")
-        if os.path.isdir(tsrc):
-            deck = None
+        except Exception as e:
+            log("wallpaper copy failed: %r" % e)
+        try:
+            legacy = "/usr/share/backgrounds/bunny-os"
+            os.makedirs(legacy, exist_ok=True)
+            for name in sorted(os.listdir(wdir)):
+                if name.endswith(".png"):
+                    shutil.copy2(os.path.join(wdir, name), os.path.join(legacy, name))
+                    os.chmod(os.path.join(legacy, name), 0o644)
+            log("system wallpaper mirror refreshed")
+        except Exception:
+            log("system wallpaper mirror skipped (read-only /usr); /var/lib copy is live")
+
+    tsrc = os.path.join(top, "decky-theme", "bunny-cute")
+    if os.path.isdir(tsrc):
+        deck = None
+        try:
+            deck = pwd.getpwnam("deck")
+        except KeyError:
+            pass
+        if deck is not None:
             try:
-                deck = pwd.getpwnam("deck")
-            except KeyError:
-                pass
-            dests = ["/usr/share/bunny-os/decky-theme/bunny-cute"]
-            if deck is not None:
-                dests.append(os.path.join(deck.pw_dir, "homebrew", "themes", "bunny-cute"))
-            for d in dests:
-                os.makedirs(d, exist_ok=True)
-                shutil.copytree(tsrc, d, dirs_exist_ok=True)
-            if deck is not None:
-                for root, dirs, files in os.walk(dests[-1]):
+                home_dest = os.path.join(deck.pw_dir, "homebrew", "themes", "bunny-cute")
+                os.makedirs(home_dest, exist_ok=True)
+                shutil.copytree(tsrc, home_dest, dirs_exist_ok=True)
+                for root, dirs, files in os.walk(home_dest):
                     try:
                         os.chown(root, deck.pw_uid, deck.pw_gid)
                         for f in files:
                             os.chown(os.path.join(root, f), deck.pw_uid, deck.pw_gid)
                     except Exception:
                         pass
-            log("Game Mode theme refreshed; restart Steam to see it")
-    except Exception as e:
-        log("extras step skipped: %r" % e)
-
+                log("Game Mode theme refreshed; restart Steam to see it")
+            except Exception as e:
+                log("Game Mode theme copy failed: %r" % e)
+        try:
+            mirror = "/usr/share/bunny-os/decky-theme/bunny-cute"
+            os.makedirs(mirror, exist_ok=True)
+            shutil.copytree(tsrc, mirror, dirs_exist_ok=True)
+        except Exception:
+            log("theme system mirror skipped (read-only /usr); home copy is live")
 
 def main():
     ap = argparse.ArgumentParser(description="Bun Bun payload self-updater")
@@ -425,6 +448,20 @@ def main():
                 log("voice update skipped: %r" % e)
 
     install_extras(top)
+
+    # Desktop wallpaper helper: keep /usr/local/bin current (writable even on
+    # immutable Bazzite); the ISO's /usr/bin copy stays untouched. The helper
+    # itself falls back to /var/lib/bunny/os/wallpapers when /usr is read-only.
+    helper_src = os.path.join(top, "bin", "bunny-desktop-theme")
+    if os.path.isfile(helper_src):
+        try:
+            os.makedirs(args.bin_dir, exist_ok=True)
+            helper_dst = os.path.join(args.bin_dir, "bunny-desktop-theme")
+            shutil.copy2(helper_src, helper_dst)
+            os.chmod(helper_dst, 0o755)
+            log("desktop theme helper refreshed")
+        except Exception as e:
+            log("desktop theme helper update skipped: %r" % e)
 
     # bunhud runtime wheels land next to the code, importable from /opt.
     if not args.no_pylibs:

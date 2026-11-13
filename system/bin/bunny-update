@@ -74,7 +74,7 @@ if [[ -f /run/ostree-booted ]]; then
   fi
 
   if (( CHECK_ONLY )); then
-    ostree admin upgrade --preview 2>/dev/null 2>&1 || log "image channel unreachable; payload update above is the channel for now"
+    ostree admin upgrade --preview >/dev/null 2>&1 || log "image channel unreachable; payload update above is the channel for now"
     exit 0
   fi
   if ! ostree admin upgrade 2>/dev/null; then

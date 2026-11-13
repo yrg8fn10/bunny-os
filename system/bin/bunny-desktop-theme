@@ -10,9 +10,15 @@
 set -uo pipefail
 
 # Preferred order: the approved pastel desktop art first, then the older set.
-WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-desktop.png"
-[[ -f "${WALLPAPER}" ]] || WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-glow.png"
-[[ -f "${WALLPAPER}" ]] || WALLPAPER="/usr/share/backgrounds/bunny-os/bunny-meadow.png"
+WALLPAPER=""
+for _d in /usr/share/backgrounds/bunny-os /var/lib/bunny/os/wallpapers; do
+  for _n in bunny-desktop.png bunny-glow.png bunny-meadow.png; do
+    if [[ -f "${_d}/${_n}" ]]; then
+      WALLPAPER="${_d}/${_n}"
+      break 2
+    fi
+  done
+done
 ACCENT="255,179,217"
 STATE_DIR="${XDG_STATE_HOME:-${HOME:-/tmp}/.local/state}/bunny"
 LOG_FILE="${STATE_DIR}/desktop-theme.log"
@@ -25,7 +31,7 @@ log() {
   printf '%s\n' "${msg}" >> "${LOG_FILE}" 2>/dev/null || true
 }
 
-[[ -f "${WALLPAPER}" ]] || { log "wallpaper missing at ${WALLPAPER}"; exit 0; }
+[[ -f "${WALLPAPER}" ]] || { log "wallpaper missing under /usr/share/backgrounds/bunny-os and /var/lib/bunny/os/wallpapers"; exit 0; }
 
 # Stage the CSS Loader (Decky) theme so Game Mode can pick it up when Decky is on.
 command -v /usr/bin/bunny-decky-theme >/dev/null 2>&1 && /usr/bin/bunny-decky-theme || true
