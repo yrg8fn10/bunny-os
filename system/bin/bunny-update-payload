@@ -268,6 +268,48 @@ def restart_services():
     return restarted
 
 
+
+def install_extras(top):
+    """Best-effort delivery of the wallpapers and the Game Mode theme."""
+    try:
+        wdir = os.path.join(top, "wallpaper")
+        if os.path.isdir(wdir):
+            dst = "/usr/share/backgrounds/bunny-os"
+            os.makedirs(dst, exist_ok=True)
+            n = 0
+            for name in sorted(os.listdir(wdir)):
+                if name.endswith(".png"):
+                    shutil.copy2(os.path.join(wdir, name), os.path.join(dst, name))
+                    os.chmod(os.path.join(dst, name), 0o644)
+                    n += 1
+            if n:
+                log("wallpaper files refreshed (%d)" % n)
+        tsrc = os.path.join(top, "decky-theme", "bunny-cute")
+        if os.path.isdir(tsrc):
+            deck = None
+            try:
+                deck = pwd.getpwnam("deck")
+            except KeyError:
+                pass
+            dests = ["/usr/share/bunny-os/decky-theme/bunny-cute"]
+            if deck is not None:
+                dests.append(os.path.join(deck.pw_dir, "homebrew", "themes", "bunny-cute"))
+            for d in dests:
+                os.makedirs(d, exist_ok=True)
+                shutil.copytree(tsrc, d, dirs_exist_ok=True)
+            if deck is not None:
+                for root, dirs, files in os.walk(dests[-1]):
+                    try:
+                        os.chown(root, deck.pw_uid, deck.pw_gid)
+                        for f in files:
+                            os.chown(os.path.join(root, f), deck.pw_uid, deck.pw_gid)
+                    except Exception:
+                        pass
+            log("Game Mode theme refreshed; restart Steam to see it")
+    except Exception as e:
+        log("extras step skipped: %r" % e)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Bun Bun payload self-updater")
     ap.add_argument("--check", action="store_true", help="report only, change nothing")
@@ -381,6 +423,8 @@ def main():
                 log("voice updated")
             except Exception as e:
                 log("voice update skipped: %r" % e)
+
+    install_extras(top)
 
     # bunhud runtime wheels land next to the code, importable from /opt.
     if not args.no_pylibs:

@@ -1,0 +1,12 @@
+{
+  "generated_utc": "2026-11-09T12:04:54Z",
+  "manifest_version": 1,
+  "notes": "Bun Bun payload channel: agent, bunhud, voice",
+  "payload": {
+    "name": "bunny-os-portable-0.2.0-beta9-pre7.tar.gz",
+    "sha256": "685c7b6f268197e7ac284a337876a70b48fef4579a6a12fbfb01fd49aa3541c7",
+    "size": 107361496
+  },
+  "sequence": 2026110912,
+  "version": "0.2.0-beta9-pre7"
+}

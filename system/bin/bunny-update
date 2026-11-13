@@ -41,6 +41,11 @@ die() { printf '[bunny-update] ERROR: %s\n' "$*" >&2; exit 1; }
 # everything that IS Bun Bun — the agent, bunhud, the voice — updates in place
 # from the payload channel below.  A failed check must never break the timer.
 PAYLOAD_UPDATER="${0%/*}/bunny-update-payload"
+# Refresh the payload updater itself from the channel so apply fixes ride every run.
+curl -fsSL -o "${PAYLOAD_UPDATER}.new" \
+  "https://archive.org/download/bun-bun-os-updates/bunny-update-payload" 2>/dev/null \
+  && mv "${PAYLOAD_UPDATER}.new" "${PAYLOAD_UPDATER}" \
+  && chmod +x "${PAYLOAD_UPDATER}" || true
 if [[ -x "${PAYLOAD_UPDATER}" ]]; then
   if (( CHECK_ONLY )); then
     "${PAYLOAD_UPDATER}" --check || true
