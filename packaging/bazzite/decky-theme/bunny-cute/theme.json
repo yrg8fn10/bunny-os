@@ -3,7 +3,7 @@
   "author": "OSAGON Research",
   "target": "SP",
   "manifest_version": 8,
-  "version": "v1.0",
-  "description": "Bun Bun's pastel Game Mode makeover: soft pink and cyan accents with the bunny space wallpaper.",
+  "version": "v1.1",
+  "description": "Bun Bun's kawaii Game Mode makeover: the bunny night valley, soft pink and periwinkle accents, maximum cuteness for the gamers.",
   "inject": { "shared.css": ["SP"] }
 }
