@@ -353,6 +353,52 @@ EOF
   fi
 fi
 
+# --- 2e. the Game Mode presence layer (bunhud) ----------------------------------
+BUNHUD_DIR="${LIB}/bunhud"
+if [[ -f "${HERE}/bunhud/bunhud.py" ]]; then
+  step "Installing the Game Mode presence layer (bunhud)"
+  run rm -rf "${DESTDIR}${BUNHUD_DIR}"
+  run install -d -m 0755 "${DESTDIR}${BUNHUD_DIR}"
+  run cp -a "${HERE}/bunhud/." "${DESTDIR}${BUNHUD_DIR}/"
+  find "${DESTDIR}${BUNHUD_DIR}" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  find "${DESTDIR}${BUNHUD_DIR}" -type f -name '*.pyc' -delete 2>/dev/null || true
+  info "bunhud   : ${BUNHUD_DIR} (draws Bun Bun over Game Mode games)"
+else
+  warn "bunhud payload missing; Bun Bun will not appear inside Game Mode games"
+fi
+
+# --- 3d. the bunhud user service ------------------------------------------------
+if [[ -f "${DESTDIR}${BUNHUD_DIR}/bunhud.py" ]]; then
+  step "Installing bunny-bunhud.service (Game Mode presence layer)"
+  put "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunhud.service" <<EOF
+[Unit]
+Description=Bun Bun Game Mode presence layer (bunhud)
+Documentation=file://${PREFIX}/share/doc/bunny-os/GAMEMODE-PRESENCE.md
+
+[Service]
+WorkingDirectory=${BUNHUD_DIR}
+ExecStart=/usr/bin/python3 ${BUNHUD_DIR}/bunhud.py --mam --sprite ${BUNHUD_DIR}/assets/bunhud-placeholder.png
+Environment=PYTHONPATH=${BUNHUD_DIR}/pylibs:${BUNHUD_DIR}
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=default.target
+EOF
+  chmod 0644 "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunhud.service" 2>/dev/null || true
+  if [[ -n "${DESTDIR}" ]]; then
+    info "[destdir] bunhud unit installed, systemctl not run"
+  elif [[ -n "${BUNNY_INSTALL_IMAGE:-}" ]]; then
+    run install -d -m 0755 "/etc/systemd/user/default.target.wants"
+    run ln -sfn "${PREFIX}/lib/systemd/user/bunny-bunhud.service" "/etc/systemd/user/default.target.wants/bunny-bunhud.service"
+    info "bunhud   : enabled for every future login"
+  else
+    run systemctl --global enable bunny-bunhud.service || warn "could not enable bunny-bunhud.service globally"
+  fi
+fi
+
 # --- 4. menu entries ---------------------------------------------------------
 step "Installing menu entries"
 put "${DESTDIR}${APPS}/bunny-os.desktop" <<EOF

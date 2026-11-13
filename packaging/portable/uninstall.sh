@@ -59,6 +59,8 @@ for file in "${DESTDIR}${BIN}/bunny-panel" \
             "${DESTDIR}${BIN}/piper" \
             "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunbun.service" \
             "${DESTDIR}/etc/systemd/user/default.target.wants/bunny-bunbun.service" \
+            "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunhud.service" \
+            "${DESTDIR}/etc/systemd/user/default.target.wants/bunny-bunhud.service" \
             "${DESTDIR}${DOCS}/BAZZITE.md"; do
   [[ -e "${file}" ]] || continue
   rm -f "${file}"

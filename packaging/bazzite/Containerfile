@@ -26,7 +26,7 @@ FROM ${BASE_IMAGE}
 # UI. Chromium is the one thing we add: the Deck has no terminal browser and
 # the wizard has to render before anything is installed.
 RUN set -eux; \
-    dnf install -y --setopt=install_weak_deps=False python3 chromium espeak-ng; \
+    dnf install -y --setopt=install_weak_deps=False python3 chromium espeak-ng python3-pip python3-pillow; \
     dnf clean all; \
     rm -rf /var/cache/dnf /var/cache/libdnf5
 
@@ -75,6 +75,11 @@ RUN set -eux; \
     test -d /usr/share/bunny-os/decky-theme/bunny-cute; \
     test -f /usr/share/applications/bunny-os.desktop; \
     test -f /usr/lib/systemd/user/bunny-bunbun.service; \
+    test -f /usr/lib/systemd/user/bunny-bunhud.service; \
+    test -f /usr/lib/bunny/bunhud/bunhud.py; \
+    test -f /usr/lib/bunny/bunhud/assets/bunhud-placeholder.png; \
+    python3 -c "import sys; sys.path.insert(0, '/usr/lib/bunny/bunhud/pylibs'); import pywayland"; \
+    python3 -c "import PIL"; \
     test -x /usr/bin/piper; \
     test -f /usr/share/bunbun/voices/bunny-default.onnx
 
@@ -82,6 +87,20 @@ RUN set -eux; \
 # Bun Bun Plymouth theme, so booting into Gaming Mode shows the bunny, not
 # Bazzite's logo. The default.plymouth symlink lives in /usr, so the theme
 # survives rpm-ostree updates.
+# bunhud: the Game Mode presence layer. It talks to the compositor through
+# pywayland, installed into the bunhud tree so it travels with the image and
+# never fights the system Python. Pillow comes from the Fedora repo.
+RUN set -eux; \
+    python3 -m pip install --no-cache-dir --target /usr/lib/bunny/bunhud/pylibs pywayland==0.4.19; \
+    rm -rf /usr/lib/bunny/bunhud/pylibs/bin
+
+COPY just/bunhud.just /usr/share/ublue-os/just/bunhud.just
+RUN set -eux; \
+    J=/usr/share/ublue-os/justfile; \
+    if [ -f "$J" ] && ! grep -q "bunhud.just" "$J"; then \
+      grep -q "just/\*" "$J" || printf "import? 'just/bunhud.just'\n" >> "$J"; \
+    fi
+
 COPY plymouth-bunbun/ /tmp/bunny-branding/
 RUN set -eux; \
     install -d /usr/share/plymouth/themes/bunbun; \
