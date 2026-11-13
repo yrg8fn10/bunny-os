@@ -91,6 +91,7 @@ class MAMEngine:
         mood: "MoodEngine | None" = None,
         library: Any | None = None,
         launcher: Callable[[Any], bool] | None = None,
+        config: Any | None = None,
     ):
         self.persona = persona
         self._conversation: ConversationEngine | None = None

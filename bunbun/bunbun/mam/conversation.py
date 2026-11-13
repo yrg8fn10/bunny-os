@@ -24,7 +24,7 @@ from typing import Any
 _SELF = re.compile(r"\b(who are you|what are you|your name)\b", re.I)
 _FEELING = re.compile(r"\b(how are you|how'?s it going|you okay|are you ok)\b", re.I)
 _THANKS = re.compile(r"\b(thank(s| you)|thanks bun|good (job|girl)|well done|nice work)\b", re.I)
-_SAD = re.compile(r"\b(i (am|'m|feel) (sad|tired|stuck|frustrated|bad)|this game sucks|i give up)\b", re.I)
+_SAD = re.compile(r"\bi (?:am|'m|feel)\s+(?:so |really |very |kinda )?(sad|tired|stuck|frustrated|bad)\b|this game sucks|i give up", re.I)
 _BORED = re.compile(r"\b(i'?m bored|boring|nothing to do)\b", re.I)
 _LORE = re.compile(r"\b(earwicks?|protocol seven|species 116|quantum influx)\b", re.I)
 

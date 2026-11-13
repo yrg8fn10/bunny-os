@@ -94,6 +94,7 @@ class AgentService:
             mood=self.mood,
             library=self.library,
             launcher=self.library.launch,
+            config=self.config,
         )
 
         self.watcher = GameWatcher(self.bus)
