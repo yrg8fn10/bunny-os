@@ -60,6 +60,18 @@ install -m 0644 "${SRC}/plugin_loader-release.service" /etc/systemd/user/plugin_
 sed -i "s|\${HOMEBREW_FOLDER}|${HB}|g" /etc/systemd/user/plugin_loader.service
 systemctl --global enable plugin_loader.service || true
 
+# Pre10 pillar 6: the custom Bunny OS boot movie, placed where Steam looks for
+# boot animations. Best effort; Steam picks it up in its boot-movie settings.
+MOVIE_SRC="/usr/share/bunny-os/boot-movie/bunny-os-boot.webm"
+if [[ -f "${MOVIE_SRC}" ]]; then
+    MOVIE_DIR="${USER_HOME}/.local/share/Steam/config/uioverrides/movies"
+    install -d -o "${USER_NAME}" -g "${USER_NAME}" "${MOVIE_DIR}"
+    install -m 0644 -o "${USER_NAME}" -g "${USER_NAME}" "${MOVIE_SRC}" \
+        "${MOVIE_DIR}/bunny-os-boot.webm" \
+        && echo "decky-init: boot movie placed at ${MOVIE_DIR}/bunny-os-boot.webm" \
+        || echo "decky-init: boot movie placement skipped (non-fatal)"
+fi
+
 # Remote-debugging marker: only into a Steam dir Steam itself created.
 [[ -d "${USER_HOME}/.steam/steam" ]] && touch "${USER_HOME}/.steam/steam/.cef-enable-remote-debugging"
 

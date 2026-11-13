@@ -87,3 +87,4 @@ if [[ -z "${DESTDIR}" ]]; then
 fi
 
 echo "Bunny OS removed from ${DESTDIR}${PREFIX}."
+rm -f "${HOME}/.local/share/Steam/config/uioverrides/movies/bunny-os-boot.webm"

@@ -41,6 +41,7 @@ RUN set -eux; \
     rm -rf /tmp/bunny-os-portable*
 
 COPY decky-theme/ /usr/share/bunny-os/decky-theme/
+COPY boot-movie/ /usr/share/bunny-os/boot-movie/
 COPY bunny-decky-theme /usr/bin/bunny-decky-theme
 RUN chmod 0755 /usr/bin/bunny-decky-theme
 
@@ -73,6 +74,7 @@ RUN set -eux; \
     test -f /usr/share/backgrounds/bunny-os/bunny-desktop.png; \
     test -f /usr/share/backgrounds/bunny-os/bunny-game-mode.png; \
     test -d /usr/share/bunny-os/decky-theme/bunny-cute; \
+    test -f /usr/share/bunny-os/boot-movie/bunny-os-boot.webm; \
     test -f /usr/share/applications/bunny-os.desktop; \
     test -f /usr/lib/systemd/user/bunny-bunbun.service; \
     test -f /usr/lib/systemd/user/bunny-bunhud.service; \
