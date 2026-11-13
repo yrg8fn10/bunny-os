@@ -65,14 +65,14 @@ if [[ -f /run/ostree-booted ]]; then
   if ! ostree remote list | grep -qx "${REMOTE}"; then
     log "configuring remote ${REMOTE}"
     ostree remote add --if-not-exists --no-gpg-verify "${REMOTE}" \
-      "https://updates.bunnyos.invalid/${CHANNEL}" || die "cannot add remote"
+      "https://updates.bunnyos.invalid/${CHANNEL}" 2>/dev/null || die "cannot add remote"
   fi
 
   if (( CHECK_ONLY )); then
-    ostree admin upgrade --preview 2>/dev/null || log "image channel unreachable; payload update above is the channel for now"
+    ostree admin upgrade --preview 2>/dev/null 2>&1 || log "image channel unreachable; payload update above is the channel for now"
     exit 0
   fi
-  if ! ostree admin upgrade; then
+  if ! ostree admin upgrade 2>/dev/null; then
     log "image channel unreachable (docs/BAZZITE.md); the payload update above is the channel for now"
   else
     log "new deployment staged; reboot to activate (old image kept for rollback)"
