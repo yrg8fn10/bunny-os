@@ -80,7 +80,6 @@ RUN set -eux; \
     test -f /usr/lib/systemd/user/bunny-bunhud.service; \
     test -f /usr/lib/bunny/bunhud/bunhud.py; \
     test -f /usr/lib/bunny/bunhud/assets/bunhud-placeholder.png; \
-    python3 -c "import sys; sys.path.insert(0, '/usr/lib/bunny/bunhud/pylibs'); import pywayland"; \
     python3 -c "import PIL"; \
     test -x /usr/bin/piper; \
     test -f /usr/share/bunbun/voices/bunny-default.onnx
