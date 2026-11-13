@@ -92,6 +92,8 @@ RUN set -eux; \
 # pywayland, installed into the bunhud tree so it travels with the image and
 # never fights the system Python. Pillow comes from the Fedora repo.
 RUN set -eux; \
+    dnf install -y --setopt=install_weak_deps=False gcc pkgconf-pkg-config wayland-devel wayland-protocols libffi-devel; \
+    dnf clean all; \
     python3 -m pip install --no-cache-dir --target /usr/lib/bunny/bunhud/pylibs pywayland==0.4.19; \
     rm -rf /usr/lib/bunny/bunhud/pylibs/bin
 
