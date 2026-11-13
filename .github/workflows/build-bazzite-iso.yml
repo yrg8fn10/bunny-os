@@ -156,6 +156,10 @@ jobs:
       - name: Build the Bun Bun OS payload image
         run: |
           set -euo pipefail
+          # The image context is packaging/bazzite/, so the ujust recipe has to
+          # be copied in from the repo root before the build sees it.
+          mkdir -p packaging/bazzite/just
+          cp just/bunhud.just packaging/bazzite/just/bunhud.just
           VERSION="$(cat VERSION)"
           sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
             --cap-add sys_admin --security-opt label=disable \
