@@ -16,6 +16,7 @@ from ..hints import Hint, HintLibrary
 from ..memory import Memory
 from ..persona import Persona
 from ..emotion import MoodEngine
+from ..intents import parse_command
 from .policy import Decision, GameContext, Kind, PolicyEngine, Proposal, SettingsView
 
 
@@ -87,6 +88,8 @@ class MAMEngine:
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
         mood: "MoodEngine | None" = None,
+        library: Any | None = None,
+        launcher: Callable[[Any], bool] | None = None,
     ):
         self.persona = persona
         self.hints = hints
@@ -99,6 +102,8 @@ class MAMEngine:
         self.clock = clock
         self.rng = rng or random.Random()
         self.mood = mood or MoodEngine(clock=clock, rng=rng)
+        self.library = library
+        self.launcher = launcher or (lambda game: False)
         self.state = GameState()
         self._session_id: int | None = None
         self._last_tick = 0.0
@@ -232,6 +237,78 @@ class MAMEngine:
                 continue
             decision = self.policy.evaluate(proposal, state.context(), settings)
             outcomes.append(self._act(proposal, decision))
+        return outcomes
+
+    # -- voice commands (pre10 pillar 4) ------------------------------------
+    def handle_command(self, text: str) -> list[Outcome]:
+        """Interpret one player utterance as a command; [] when not a command."""
+        command = parse_command(text)
+        if command.kind == "unknown":
+            return []
+        outcomes: list[Outcome] = []
+        settings = self.settings()
+
+        if command.kind == "link_library":
+            if self.library is None:
+                outcomes.append(self._speak(
+                    self.persona.line("library_missing"), Kind.SPEAK,
+                    dedupe=f"link-none:{int(self.clock()) // 30}"))
+                return outcomes
+            result = self.library.link()
+            self._remember("library.linked", {"count": result["count"]})
+            self.bus.publish("bunbun.library_linked", result)
+            line = self.persona.line("library_linked", count=result["count"])
+            outcomes.append(self._speak(line, Kind.SPEAK,
+                                        dedupe=f"link:{int(self.clock()) // 30}"))
+
+        elif command.kind == "list_games":
+            if self.library is None or not self.library.linked:
+                outcomes.append(self._speak(
+                    self.persona.line("library_missing"), Kind.SPEAK,
+                    dedupe=f"list-none:{int(self.clock()) // 30}"))
+            else:
+                titles = self.library.preview(4)
+                line = self.persona.line("library_list",
+                                         games=", ".join(titles) if titles else "",
+                                         count=len(self.library.games))
+                outcomes.append(self._speak(line, Kind.SPEAK,
+                                            dedupe=f"list:{int(self.clock()) // 30}"))
+
+        elif command.kind == "launch":
+            if self.library is None or not self.library.games:
+                outcomes.append(self._speak(
+                    self.persona.line("library_missing"), Kind.SPEAK,
+                    dedupe=f"launch-none:{int(self.clock()) // 30}"))
+                return outcomes
+            game, score = self.library.find(command.arg)
+            line = (self.persona.line("launch_starting", title=game.name)
+                    if game and score >= 0.42
+                    else self.persona.line("launch_missing", title=command.arg))
+            proposal = Proposal(
+                kind=Kind.LAUNCH, text=line, priority=85,
+                dedupe_key=f"launch:{command.arg}",
+                meta={"library_linked": bool(self.library.linked),
+                      "found": bool(game), "title": game.name if game else command.arg})
+            decision = self.policy.evaluate(proposal, self.state.context(), settings)
+            outcome = self._act(proposal, decision)
+            if outcome.executed:
+                game_ok = bool(self.launcher(game)) if game else False
+                outcome.extra["launched"] = game_ok
+                if game_ok:
+                    self._remember("library.launched",
+                                   {"title": game.name, "app_id": game.app_id})
+                    self.bus.publish("bunbun.game_launch", {
+                        "title": game.name, "app_id": game.app_id})
+                else:
+                    outcome.executed = False
+                    outcome.rule = "launcher-unavailable"
+                    outcome.reason = "could not ask Steam to launch the game"
+            outcomes.append(outcome)
+
+        elif command.kind == "greet":
+            line = self.persona.greet()
+            outcomes.append(self._speak(line, Kind.SPEAK,
+                                        dedupe=f"greet:{int(self.clock()) // 20}"))
         return outcomes
 
     # -- execution ---------------------------------------------------------

@@ -111,6 +111,28 @@
       "Hey, be kind to yourself, okay?",
       "Small steps still count!",
       "I'll be here whenever you're ready."
+    ],
+    "library_linked": [
+      "Okay, linked up your Steam library! I count {count} games ready to hop into~",
+      "All linked! {count} games on the shelf, and I know every single one of them.",
+      "Ooh, {count} games linked. Pick a favorite and say the word, we'll play it together."
+    ],
+    "library_list": [
+      "We've got {count} games! Like {games}, ooh, or something else if none of those sing to you~",
+      "{count} games in the library. Right now I see {games}, and the rest are hiding just out of earshot."
+    ],
+    "launch_starting": [
+      "Booting up {title}! Go go go~",
+      "Ooh good pick! Starting {title} now, I'll be right there beside you.",
+      "You got it, {title} coming right up! Hop in, buddy."
+    ],
+    "launch_missing": [
+      "Hmm, I don't see {title} in the library yet. Say link up my steam and I'll go look again~",
+      "I couldn't find {title} on the shelf. Is it installed, or should I relink the library?"
+    ],
+    "library_missing": [
+      "My library link isn't set up yet! Say link up my steam and I'll go peek at it.",
+      "Link me up first, buddy! Just say link up my steam and I'll take it from there."
     ]
   }
 }

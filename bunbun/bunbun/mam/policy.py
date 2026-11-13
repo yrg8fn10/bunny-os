@@ -26,6 +26,7 @@ class Kind(str, Enum):
     JOIN = "join"          # enter a multiplayer lobby
     CHAT = "chat"          # send a message to another player
     MEMORY = "memory"      # persist a note
+    LAUNCH = "launch"      # start a game the player asked for (pre10)
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ DEFAULT_COOLDOWNS: dict[Kind, float] = {
     Kind.JOIN: 30.0,
     Kind.CHAT: 20.0,
     Kind.MEMORY: 0.0,
+    Kind.LAUNCH: 15.0,
 }
 
 MAX_ACTIONS_PER_MINUTE = 24
@@ -142,6 +144,7 @@ class PolicyEngine:
             {"rule": "input-token", "effect": "input also requires the root-owned input token"},
             {"rule": "invite-only", "effect": "joins require a real lobby invitation"},
             {"rule": "kid-safe-chat", "effect": "kid_safe persona never messages strangers"},
+            {"rule": "launch-library", "effect": "voice launch runs only for a linked library title, matched locally"},
             {"rule": "rate-limit", "effect": f"max {MAX_ACTIONS_PER_MINUTE} actions/minute, per-kind cooldowns"},
         ]
 
@@ -182,6 +185,11 @@ class PolicyEngine:
             decision = self._gate_chat(proposal, game, settings)
             if not decision.allowed:
                 return decision
+        elif proposal.kind is Kind.LAUNCH:
+            if not proposal.meta.get("library_linked"):
+                return Decision(False, "library is not linked yet", "launch-library")
+            if not proposal.meta.get("found"):
+                return Decision(False, "no such title in the library", "launch-library")
 
         return self._gate_rate(proposal)
 

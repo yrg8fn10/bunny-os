@@ -39,6 +39,7 @@ from .action import CoopAgent, InputClient, JoinInvite
 from .bus import EventBus
 from .config import PACKAGE_DATA, AgentConfig, USER_SETTINGS, load_config
 from .hints import HintLibrary
+from .library import LibraryManager
 from .mam import GameState, Kind, MAMEngine, PolicyEngine
 from .memory import Memory
 from .perception import GameWatcher
@@ -74,6 +75,7 @@ class AgentService:
         self.started_at = time.time()
 
         self.mood = MoodEngine()
+        self.library = LibraryManager()
         self.tts = TTSPipeline(
             config,
             on_spoken=lambda text: self.bus.publish("bunbun.spoken", {"text": text}),
@@ -90,6 +92,8 @@ class AgentService:
             speaker=self.tts.say,
             input_enabled=lambda: self.input_client.enabled,
             mood=self.mood,
+            library=self.library,
+            launcher=self.library.launch,
         )
 
         self.watcher = GameWatcher(self.bus)
@@ -171,6 +175,13 @@ class AgentService:
     def tick(self, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return [o.to_dict() for o in self.engine.tick(payload)]
 
+    def command(self, text: str) -> list[dict[str, Any]]:
+        """One player utterance, parsed as a voice command."""
+        return [o.to_dict() for o in self.engine.handle_command(text)]
+
+    def library_status(self) -> dict[str, Any]:
+        return self.library.status()
+
     def hint(self, secret: bool = False) -> dict[str, Any] | None:
         outcome = self.engine.request_hint(allow_secret=secret)
         return outcome.to_dict() if outcome else None
@@ -205,6 +216,7 @@ class AgentService:
                 "local_only": True,
             },
             "engine": self.engine.status(),
+            "library": self.library.status(),
             "watcher": snap.as_dict(),
             "coop": self.coop.status(),
             "events": self.bus.recent(10),
@@ -282,6 +294,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._stream()
         elif route == "/v1/state":
             self._json(200, svc.engine.state.to_dict())
+        elif route == "/v1/library":
+            self._json(200, svc.library_status())
         else:
             self._json(404, {"ok": False, "error": "not found"})
 
@@ -304,6 +318,11 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self._json(200, {"outcomes": svc.tick(body or None)})
             elif route == "/v1/say":
                 self._json(200, svc.say(str(body.get("text", ""))))
+            elif route == "/v1/command":
+                text = str(body.get("text", ""))
+                if not text.strip():
+                    raise ValueError("text is required")
+                self._json(200, {"outcomes": svc.command(text)})
             elif route == "/v1/hint":
                 result = svc.hint(secret=bool(body.get("secret", False)))
                 self._json(200, {"hint": result})
