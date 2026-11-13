@@ -45,7 +45,7 @@ from .memory import Memory
 from .perception import GameWatcher
 from .persona import Persona
 from .emotion import MoodEngine
-from .audio.mic import MicCapture
+from .audio.mic import MicCapture, build_stt
 from .audio.router import AudioRouter
 from .tts import TTSPipeline
 
@@ -99,6 +99,7 @@ class AgentService:
         self.watcher = GameWatcher(self.bus)
         self.coop = CoopAgent(self.bus)
         self.mic = MicCapture(config)
+        self.stt = build_stt(config)
         self.router = AudioRouter()
 
         self._stop = threading.Event()
@@ -106,6 +107,7 @@ class AgentService:
         self._threads = [
             threading.Thread(target=self._event_loop, name="bunbun-events", daemon=True),
             threading.Thread(target=self._tick_loop, name="bunbun-tick", daemon=True),
+            threading.Thread(target=self._listen_loop, name="bunbun-ears", daemon=True),
         ]
 
     # -- settings ----------------------------------------------------------
@@ -154,8 +156,10 @@ class AgentService:
             if event.topic == "game.detected":
                 payload = dict(event.payload)
                 payload.setdefault("allowlisted", False)
+                self.mic.set_session_active(True)
                 self.engine.observe(payload)
             elif event.topic == "game.exited":
+                self.mic.set_session_active(False)
                 self.engine.observe({})
 
     def _tick_loop(self) -> None:
@@ -165,6 +169,43 @@ class AgentService:
                     self.engine.tick()
             except Exception:
                 LOG.exception("tick failed")
+
+    # -- the ears (pre10 pillar 5) -----------------------------------------
+    def _listen_loop(self) -> None:
+        """Always-listening companion loop, still behind every gate.
+
+        Gates, in order, unchanged: settings switch, scope (session or
+        always), privacy cooldown, hardware kill switch. When a transcript
+        passes, it is first a command, then conversation. The WAV is deleted
+        inside listen_once before anything else happens.
+        """
+        cadence = float(getattr(self.config, "mic_poll_seconds", 1.5))
+        while not self._stop.is_set():
+            try:
+                if not self.mic.allowed or self.mic.push_to_talk:
+                    self._stop.wait(5.0)
+                    continue
+                if self.mic.listen_mode == "session" and not self.mic.session_active:
+                    self._stop.wait(2.0)
+                    continue
+                text = self.mic.listen_once(self.stt)
+                if not text:
+                    self._stop.wait(cadence)
+                    continue
+                self.bus.publish("player.spoke", {"text": text})
+                outcomes = self.engine.handle_command(text)
+                if not outcomes:
+                    outcomes = [o for o in self.engine.chat(text)]
+                self._remember_spoke(text, outcomes)
+            except Exception:
+                LOG.exception("listen loop hiccup; resuming")
+                self._stop.wait(3.0)
+
+    def _remember_spoke(self, text: str, outcomes: list) -> None:
+        for outcome in outcomes:
+            if getattr(outcome, "executed", False):
+                self._remember("player.spoke", {"heard": text,
+                                                "action": outcome.kind})
 
     # -- operations --------------------------------------------------------
     def observe(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -211,6 +252,7 @@ class AgentService:
                 "tts": self.tts.stats,
                 "input_enabled": self.input_client.enabled,
                 "mic_enabled": self.config.mic_enabled,
+                "mic_listen_mode": self.mic.listen_mode,
                 "mic_window_open": self.mic.window_open,
                 "mood": self.mood.to_dict(),
                 "local_only": True,

@@ -40,6 +40,9 @@ class AgentConfig:
     mic_enabled: bool = False       # never hot by default; see audio/mic.py
     mic_push_to_talk: bool = True   # capture only inside an explicit window
     mic_stt: str = "auto"           # auto|whisper|none (local only)
+    mic_listen_mode: str = "session"  # session|always (pre10: ears stay open)
+    mic_poll_seconds: float = 1.5   # cadence of the listening loop
+    whisper_model: Path | None = None  # local whisper.cpp model; never bundled
     mic_device: str = ""            # PipeWire target; empty = default source
     piper_model: Path | None = None
     tick_seconds: float = 4.0
@@ -62,6 +65,12 @@ def _read_json(path: Path) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _optional_path(value) -> Path | None:
+    if value is None or value == "":
+        return None
+    return Path(str(value)).expanduser()
 
 
 def _optional_int(value: Any, default: int | None) -> int | None:
@@ -112,6 +121,9 @@ def load_config(settings_file: Path | None = None,
         mic_push_to_talk=_coerce_bool(pick("mic_push_to_talk", cfg.mic_push_to_talk),
                                       cfg.mic_push_to_talk),
         mic_stt=str(pick("mic_stt", cfg.mic_stt)),
+        mic_listen_mode=str(pick("mic_listen_mode", cfg.mic_listen_mode)),
+        mic_poll_seconds=float(pick("mic_poll_seconds", cfg.mic_poll_seconds)),
+        whisper_model=(_optional_path(pick("whisper_model", None))),
         mic_device=str(pick("mic_device", cfg.mic_device)),
         max_utterance_chars=int(pick("max_utterance_chars", cfg.max_utterance_chars)),
     )

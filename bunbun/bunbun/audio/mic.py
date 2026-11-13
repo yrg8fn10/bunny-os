@@ -65,6 +65,16 @@ class MicCapture:
     def session_active(self) -> bool:
         return self._session_active
 
+    @property
+    def listen_mode(self) -> str:
+        """session (companion while playing) or always (pre10: ears stay open).
+
+        In always mode the desktop is in scope too. The privacy gate, the
+        kill switch and the settings switch still close her ears exactly the
+        same way they always did; only the *scope* widens.
+        """
+        return str(getattr(self.config, "mic_listen_mode", "session"))
+
     def set_session_active(self, active: bool) -> None:
         """Gate 2 (session mode): mark whether a game session is running.
 
@@ -106,6 +116,8 @@ class MicCapture:
         """Gate 2: the mode's own scope."""
         if self.push_to_talk:
             return self.window_open
+        if self.listen_mode == "always":
+            return True
         return self._session_active
 
     def capture(self, seconds: float = 4.0) -> Optional[Path]:
@@ -210,3 +222,18 @@ class WhisperBackend:
             return None
         text = proc.stdout.decode("utf-8", "replace").strip()
         return text or None
+
+
+def build_stt(config):
+    """Build the local STT backend from settings; None when unavailable.
+
+    Nothing here talks to a network. If whisper.cpp or its model is missing,
+    the ears simply stay quiet (capture still happens for stats but
+    transcription returns None and the loop says nothing).
+    """
+    which = str(getattr(config, "mic_stt", "auto") or "auto")
+    if which in {"none", "off"}:
+        return None
+    model = getattr(config, "whisper_model", None)
+    backend = WhisperBackend(model=model)
+    return backend if backend.available() else None
