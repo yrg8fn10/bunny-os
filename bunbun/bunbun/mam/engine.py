@@ -17,6 +17,7 @@ from ..memory import Memory
 from ..persona import Persona
 from ..emotion import MoodEngine
 from ..intents import parse_command
+from .conversation import ConversationEngine, build_brain
 from .policy import Decision, GameContext, Kind, PolicyEngine, Proposal, SettingsView
 
 
@@ -92,6 +93,8 @@ class MAMEngine:
         launcher: Callable[[Any], bool] | None = None,
     ):
         self.persona = persona
+        self._conversation: ConversationEngine | None = None
+        self.config_ref = config
         self.hints = hints
         self.settings_provider = settings_provider
         self.memory = memory
@@ -240,6 +243,29 @@ class MAMEngine:
         return outcomes
 
     # -- voice commands (pre10 pillar 4) ------------------------------------
+    def chat(self, text: str) -> list[Outcome]:
+        """Companion conversation (pre10 pillar 3). Empty when she says nothing.
+
+        Still inside the safety layer: the reply goes out as a SPEAK proposal
+        through the same policy gate as everything else, so the kill switch,
+        agent-disabled state and rate limits all still apply.
+        """
+        if self._conversation is None:
+            self._conversation = ConversationEngine(self.persona, build_brain(self.config_ref))
+        reply = self._conversation.reply(text, now=self.clock())
+        if not reply:
+            return []
+        proposal = Proposal(
+            kind=Kind.SPEAK, text=reply, priority=55,
+            dedupe_key=f"chat:{int(self.clock()) // 20}",
+            meta={"conversation": True})
+        decision = self.policy.evaluate(proposal, self.state.context(), self.settings())
+        outcome = self._act(proposal, decision)
+        if outcome.executed:
+            self._remember("conversation.turn", {"heard": text})
+            self.bus.publish("bunbun.chatted", {"heard": text})
+        return [outcome]
+
     def handle_command(self, text: str) -> list[Outcome]:
         """Interpret one player utterance as a command; [] when not a command."""
         command = parse_command(text)

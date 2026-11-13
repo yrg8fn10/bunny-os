@@ -54,7 +54,7 @@
     "hint": [
       "Psst! Look {where}.",
       "Tiny hint: try {where}.",
-      "The secret is usually {where} — go peek!"
+      "The secret is usually {where} \u2014 go peek!"
     ],
     "secret": [
       "Secret spot! {where}. I won't tell anyone~",
@@ -88,7 +88,7 @@
     ],
     "idle": [
       "Still here! Just nibbling a carrot.",
-      "Take your time — I'm comfy."
+      "Take your time \u2014 I'm comfy."
     ],
     "sideline": [
       "I'm watching from my little corner! Go go!",
@@ -134,5 +134,40 @@
       "My library link isn't set up yet! Say link up my steam and I'll go peek at it.",
       "Link me up first, buddy! Just say link up my steam and I'll take it from there."
     ]
-  }
+  },
+  "chat_self": [
+    "I'm Bun Bun, your bunny in the machine, hopping along with you!",
+    "I'm Bun Bun, your little game companion, always right here.",
+    "Just Bun Bun, your fluffy copilot, ears up and listening."
+  ],
+  "chat_feel_good": [
+    "I'm doing great, especially with you around!",
+    "Feeling bouncy and ready to play with you!",
+    "I'm wonderful, thanks for asking, friend!"
+  ],
+  "chat_feel_bad": [
+    "It's okay to feel stuck. I'm right here with you.",
+    "Tough moments happen. Want to take a little breather together?",
+    "Everyone gets tired sometimes. I'll stay right here, okay?"
+  ],
+  "chat_praise": [
+    "Aww, thank you! Ears wiggling happily!",
+    "That makes my little tail wiggle, thank you!",
+    "You're the best teammate, seriously!"
+  ],
+  "chat_bored": [
+    "Ooh, want to try a new game from your library?",
+    "Boredom detected! Maybe a fresh adventure is the cure.",
+    "Let's find something fun to play together!"
+  ],
+  "chat_lore": [
+    "Ooh, you know your lore! The Earwicks would be proud.",
+    "Protocol Seven is watching... quietly. Just kidding, keep playing!",
+    "That's deep-hutch knowledge! I love that you remember."
+  ],
+  "chat_fallback": [
+    "I hear you! Tell me more while you play?",
+    "Mmhm, I'm listening, keep going!",
+    "That sounds interesting! What happened next?"
+  ]
 }
