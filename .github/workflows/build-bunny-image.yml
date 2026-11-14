@@ -148,11 +148,10 @@ jobs:
           REGISTRY_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/bunny-${TARGET_ID}"
           echo "registry image: ${REGISTRY_IMAGE}"
           # stable + the version + the commit, so a release can be pinned.
-          for t in $(echo "${EXTRA_TAGS}" | tr ',' ' '); do
+          TAGS="$(echo "${EXTRA_TAGS}" | tr ',' ' ') ${BUNNY_VERSION} sha-${GITHUB_SHA::7}"
+          for t in ${TAGS}; do
             sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:${t}"
           done
-          sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:${BUNNY_VERSION}"
-          sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:sha-${GITHUB_SHA::7}"
           sudo podman images --format '{{.Repository}}:{{.Tag}}' | grep bunny
           if [ "${PUSH}" != "true" ]; then
             echo "push disabled; image stays local"
@@ -160,7 +159,11 @@ jobs:
           fi
           echo "${GHCR_TOKEN}" | sudo podman login ghcr.io \
             --username "${GITHUB_ACTOR}" --password-stdin
-          sudo podman push --all-tags "${REGISTRY_IMAGE}"
+          # podman push has no --all-tags: push each tag in turn. The layers
+          # are shared, so after the first push the rest are manifest-only.
+          for t in ${TAGS}; do
+            sudo podman push "${REGISTRY_IMAGE}:${t}"
+          done
           echo "### Published to ghcr.io" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "sudo rpm-ostree rebase ostree-unverified-registry:${REGISTRY_IMAGE}:stable" >> "$GITHUB_STEP_SUMMARY"
