@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-image-update - the image channel's client side, Windows-Update style.
+#
+#  Runs as root on a timer. Compares the booted container-image deployment
+#  against the ghcr :stable manifest; when a newer image exists it stages it
+#  with rpm-ostree upgrade and reboots into it. rpm-ostree upgrades are atomic
+#  and never touch /var or /var/home, so games, saves and Bun Bun's own state
+#  are intact through every update.
+#
+#  Fail-safe by design: any error logs and exits, and the next cycle retries.
+#  A system that is not on the image channel does nothing at all.
+# =============================================================================
+set -uo pipefail
+
+STATE_DIR="/var/lib/bunny"
+LOG_FILE="${STATE_DIR}/image-update.log"
+
+mkdir -p "${STATE_DIR}" 2>/dev/null || true
+log() {
+  printf '%s [image-update] %s\n' "$(date -u +%FT%TZ)" "$*" >>"${LOG_FILE}" 2>/dev/null || true
+}
+
+# Only a system that was rebased onto the image channel does anything.
+ref="$(rpm-ostree status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(""); raise SystemExit
+for dep in d.get("deployments", []):
+    if dep.get("booted"):
+        print(dep.get("container-image-reference", "") or "")
+        break
+' 2>/dev/null || true)"
+case "${ref}" in
+  ostree-unverified-registry:*|ostree-remote-registry:*) ;;
+  *) log "not on the image channel (${ref:-unknown}); nothing to do"; exit 0 ;;
+esac
+local_digest="${ref##*@}"
+
+token="$(curl -fsSL --max-time 60 "https://ghcr.io/token?scope=repository:yrg8fn10/bunny-deck-lcd:pull" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')" \
+  || { log "could not reach the registry"; exit 0; }
+remote_digest="$(curl -fsSL --max-time 60 -H "Authorization: Bearer ${token}" \
+  -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+  -D - -o /dev/null "https://ghcr.io/v2/yrg8fn10/bunny-deck-lcd/manifests/stable" \
+  | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:"{print $2}')" \
+  || { log "could not read the stable manifest"; exit 0; }
+[[ -n "${remote_digest}" ]] || { log "registry did not report a digest"; exit 0; }
+
+if [[ -z "${local_digest}" || "${local_digest}" == "${remote_digest}" ]]; then
+  log "up to date (remote ${remote_digest})"
+  exit 0
+fi
+
+log "update available: booted ${local_digest:-unknown}, stable ${remote_digest}; upgrading"
+if ! rpm-ostree upgrade >>"${LOG_FILE}" 2>&1; then
+  log "rpm-ostree upgrade failed; will retry next cycle"
+  exit 0
+fi
+
+# Reboot only when the remote image is actually staged as the next boot.
+staged="$(rpm-ostree status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print(""); raise SystemExit
+for dep in d.get("deployments", []):
+    if not dep.get("booted"):
+        r = dep.get("container-image-reference", "") or ""
+        print(r.split("@")[-1] if "@" in r else "")
+        break
+' 2>/dev/null || true)"
+if [[ "${staged}" == "${remote_digest}" ]]; then
+  log "update staged; announcing and restarting"
+  espeak-ng "Bunny O S update downloaded. Restarting now. See you in a minute." 2>/dev/null || true
+  sleep 5
+  systemctl reboot
+else
+  log "staged digest (${staged:-none}) does not match the remote; skipping restart"
+fi

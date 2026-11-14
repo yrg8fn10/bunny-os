@@ -115,6 +115,14 @@ RUN set -eux; \
     readlink /usr/share/plymouth/themes/default.plymouth | grep -q bunbun; \
     test -f /usr/share/plymouth/themes/bunbun/bunbun-logo.png
 
+COPY bunny-image-update /usr/bin/bunny-image-update
+COPY bunny-image-update.service /etc/systemd/system/bunny-image-update.service
+COPY bunny-image-update.timer /etc/systemd/system/bunny-image-update.timer
+RUN set -eux; \
+    chmod 0755 /usr/bin/bunny-image-update; \
+    touch /usr/share/bunny-os/image-mode; \
+    ln -sfn ../bunny-image-update.timer /etc/systemd/system/timers.target.wants/bunny-image-update.timer
+
 ARG BUNNY_VERSION=0.0.0
 LABEL org.opencontainers.image.title="Bunny OS (Bazzite Deck base)" \
       org.opencontainers.image.description="Bazzite Deck with the Bunny OS Control Panel and first-boot wizard" \

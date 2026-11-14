@@ -15,7 +15,12 @@ MARKER="/var/lib/bunny/.oobe-done"
 
 [[ -d /var/lib/bunny ]] || exit 0          # live installer env, not the deck image
 [[ -f "${DONE}" ]] && exit 0
-[[ -f "${MARKER}" ]] || exit 0             # wizard not finished; the wizard kicks us
+# Normal gate: the first-boot wizard finished. But a system that arrived on
+# the image channel (a rebase, not a flash) has no wizard to finish: its
+# Steam data is already there, so the wait below is the race protection.
+if [[ ! -f "${MARKER}" && ! -f /usr/share/bunny-os/image-mode ]]; then
+    exit 0                                  # wizard not finished; the wizard kicks us
+fi
 [[ -f "${DIGEST_FILE}" ]] || exit 0
 
 USER_NAME="$(getent passwd | awk -F: '$3 >= 1000 && $6 ~ /^\/home\// {print $1; exit}')"

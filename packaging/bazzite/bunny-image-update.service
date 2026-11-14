@@ -1,0 +1,10 @@
+[Unit]
+Description=Bun Bun OS image channel update (download, stage, restart)
+Documentation=file:///usr/share/doc/bunny-os/IMAGE-CHANNEL.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bunny-image-update
+Nice=10

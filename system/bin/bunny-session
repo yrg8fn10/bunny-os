@@ -55,6 +55,17 @@ log() {
 
 die() { log "ERROR: $*"; exit 1; }
 
+# The portable install lives under /usr/local; the image channel installs
+# under /usr. Resolve helpers in both places so a channel switch never
+# silently drops the desktop theme, the greeting or the panel.
+find_helper() {
+  local name="$1" p
+  for p in /usr/local/bin /usr/bin; do
+    [[ -x "${p}/${name}" ]] && { printf '%s\n' "${p}/${name}"; return 0; }
+  done
+  return 1
+}
+
 log "target=${BUNNY_TARGET_ID:-generic} mode=${MODE} wayland=${WAYLAND_DISPLAY:-unset}"
 
 export XDG_CURRENT_DESKTOP="BunnyOS"
@@ -69,7 +80,7 @@ export BUNNY_SESSION_MODE="${MODE}"
 # A greeting is only wanted when the user lands on the desktop, not on every
 # internal fallback. play_greeting is idempotent per boot via the stamp file.
 play_greeting() {
-  local helper=/usr/local/bin/bunny-desktop-greeting
+  local helper; helper="$(find_helper bunny-desktop-greeting)" || return 0
   [[ -x "${helper}" ]] || return 0
   ( sleep 4; "${helper}" ) >/dev/null 2>&1 &
 }
@@ -77,7 +88,7 @@ play_greeting() {
 # Plasma owns the wallpaper through plasmashell's DBus interface, so the theme
 # has to run after the shell is up - never before, and never blocking.
 apply_desktop_theme() {
-  local helper=/usr/local/bin/bunny-desktop-theme
+  local helper; helper="$(find_helper bunny-desktop-theme)" || return 0
   [[ -x "${helper}" ]] || return 0
   ( sleep 6; "${helper}" ) >/dev/null 2>&1 &
 }
@@ -102,7 +113,7 @@ start_desktop() {
 # ---------------------------------------------------------------------------
 #  Gaming session
 # ---------------------------------------------------------------------------
-PANEL="${BUNNY_PANEL_BIN:-/usr/local/bin/bunny-panel}"
+PANEL="${BUNNY_PANEL_BIN:-$(find_helper bunny-panel || printf '/usr/bin/bunny-panel')}"
 
 gaming_failures() {
   local n=0
