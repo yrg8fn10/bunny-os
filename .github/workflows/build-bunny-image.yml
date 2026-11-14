@@ -1,0 +1,168 @@
+name: build-bunny-image
+
+# The Bunny OS image channel.
+#
+# Builds the Bunny OS-on-Bazzite deck image (packaging/bazzite/Containerfile)
+# and pushes it to ghcr.io. A running Deck can switch onto it IN PLACE with
+#
+#     sudo rpm-ostree rebase ostree-unverified-registry:ghcr.io/<owner>/bunny-<target>:stable
+#     sudo systemctl reboot
+#
+# and afterwards every release updates the way Bazzite updates: pull the new
+# image, stage it, reboot into it. No reflash, no factory reset; /home, /var,
+# games and saves are untouched, and the previous image stays bootable from the
+# GRUB menu (rpm-ostree rollback). The ISO remains the fresh-install door for
+# new machines; this channel is the update door for machines that already run
+# Bunny OS (or stock Bazzite).
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Bazzite Deck base image"
+        type: string
+        default: ghcr.io/ublue-os/bazzite-deck:stable
+      target:
+        description: "Build target (see packaging/bazzite/targets.json)"
+        type: string
+        default: deck-lcd
+      image_tags:
+        description: "Extra registry tags, comma separated"
+        type: string
+        default: "stable"
+      push:
+        description: "Push the built image to ghcr.io"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*-image"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-bunny-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Static verification
+        run: python3 tools/verify.py --strict
+      - name: Shell syntax
+        run: |
+          set -euo pipefail
+          bash -n packaging/portable/install.sh
+          bash -n packaging/portable/uninstall.sh
+          bash -n packaging/portable/bin/bunny-os
+          bash -n packaging/portable/bin/bunny-os-setup
+          bash -n scripts/build-portable.sh
+
+  build:
+    name: build + publish the Bunny OS deck image
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          tool-cache: true
+
+      - name: Put container storage on a btrfs loopback
+        run: |
+          set -euo pipefail
+          sudo truncate -s 110G /mnt/podman-storage.img
+          sudo mkfs.btrfs -f -m single -d single /mnt/podman-storage.img
+          sudo podman system reset --force
+          sudo systemctl stop podman.service
+          LOOP=$(sudo losetup --find --show --direct-io=on /mnt/podman-storage.img)
+          sudo mkdir -p /mnt/podman-storage
+          sudo mount -o compress-force=zstd:2,discard=async,noatime "$LOOP" /mnt/podman-storage
+          sudo mkdir -p /mnt/podman-storage/storage /mnt/podman-storage/tmp
+          sudo mount --bind /mnt/podman-storage/storage /var/lib/containers/storage
+          sudo systemctl start podman.service
+          sudo df -h /var/lib/containers/storage
+
+      - uses: actions/checkout@v4
+
+      - name: Resolve build target
+        env:
+          IN_TARGET: ${{ inputs.target || 'deck-lcd' }}
+          IN_BASE: ${{ inputs.base_image }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > /tmp/bunny-target.env
+          import json, os
+          t = json.load(open("packaging/bazzite/targets.json"))
+          tid = os.environ["IN_TARGET"].strip()
+          if tid not in t:
+              raise SystemExit(f"unknown build target '{tid}'")
+          d = t[tid]
+          print(f"TARGET_ID={tid}")
+          print(f"TARGET_LABEL={d['label']}")
+          print(f"BASE_IMAGE={os.environ.get('IN_BASE') or d['base_image']}")
+          print(f"IMAGE_REF=localhost/bunny-{tid}:latest")
+          print(f"BUNNY_VERSION={open('VERSION').read().strip()}")
+          PY
+          cat /tmp/bunny-target.env >> "$GITHUB_ENV"
+          cat /tmp/bunny-target.env
+
+      - name: Build the portable payload
+        run: |
+          set -euo pipefail
+          bash scripts/build-portable.sh --out out
+          cp out/bunny-os-portable-*.tar.gz packaging/bazzite/bunny-os-portable.tar.gz
+          ls -lh packaging/bazzite/bunny-os-portable.tar.gz
+
+      - name: Build the Bunny OS deck image
+        run: |
+          set -euo pipefail
+          # The image context is packaging/bazzite/, so the ujust recipe has to
+          # be copied in from the repo root before the build sees it.
+          mkdir -p packaging/bazzite/just
+          cp just/bunhud.just packaging/bazzite/just/bunhud.just
+          sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
+            --cap-add sys_admin --security-opt label=disable \
+            --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+            --build-arg BUNNY_VERSION="${BUNNY_VERSION}" \
+            -t "${IMAGE_REF}" \
+            packaging/bazzite/
+          sudo podman images --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+
+      - name: Tag and publish to ghcr.io
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXTRA_TAGS: ${{ inputs.image_tags || 'stable' }}
+          PUSH: ${{ inputs.push == true || github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          REGISTRY_IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/bunny-${TARGET_ID}"
+          echo "registry image: ${REGISTRY_IMAGE}"
+          # stable + the version + the commit, so a release can be pinned.
+          for t in $(echo "${EXTRA_TAGS}" | tr ',' ' '); do
+            sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:${t}"
+          done
+          sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:${BUNNY_VERSION}"
+          sudo podman tag "${IMAGE_REF}" "${REGISTRY_IMAGE}:sha-${GITHUB_SHA::7}"
+          sudo podman images --format '{{.Repository}}:{{.Tag}}' | grep bunny
+          if [ "${PUSH}" != "true" ]; then
+            echo "push disabled; image stays local"
+            exit 0
+          fi
+          echo "${GHCR_TOKEN}" | sudo podman login ghcr.io \
+            --username "${GITHUB_ACTOR}" --password-stdin
+          sudo podman push --all-tags "${REGISTRY_IMAGE}"
+          echo "### Published to ghcr.io" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo rpm-ostree rebase ostree-unverified-registry:${REGISTRY_IMAGE}:stable" >> "$GITHUB_STEP_SUMMARY"
+          echo "sudo systemctl reboot" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
