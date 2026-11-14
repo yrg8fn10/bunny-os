@@ -35,7 +35,7 @@ on:
         type: boolean
         default: true
   push:
-    tags: ["v*-image"]
+    tags: ["v*-image*"]
 
 permissions:
   contents: read
