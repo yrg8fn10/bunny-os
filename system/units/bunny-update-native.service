@@ -1,0 +1,9 @@
+[Unit]
+Description=Bunny OS native updater (check/pull/verify/stage, Bun Bun announces)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bunny-update-native --check
+# Quiet hours are read from /etc/bunny/settings.json; the timer respects them.
