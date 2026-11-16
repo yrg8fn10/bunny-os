@@ -9,9 +9,12 @@ Voice models are **not** shipped in this repository:
 """
 from __future__ import annotations
 
+import json
 import logging
+import re
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,6 +119,97 @@ class EspeakBackend(Backend):
         return proc.returncode == 0 and out.is_file() and out.stat().st_size > 0
 
 
+class VoiceBankBackend(Backend):
+    """Bun Bun's real voice as pre-rendered clips (the v2 voice bank).
+
+    The lines Bun Bun already knows (persona pools, farewells, hints and the
+    system phrases) are rendered ahead of time in her actual voice and matched
+    by normalized text.  Unknown text returns False so the next backend in the
+    chain can still speak it.
+    """
+
+    name = "bank"
+
+    def __init__(self, bank_dir: Path):
+        self.bank_dir = Path(bank_dir)
+        self._index: dict[str, Path] | None = None
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        text = unicodedata.normalize("NFKC", text or "").lower()
+        text = re.sub(r"[^a-z0-9']+", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _load(self) -> dict[str, Path]:
+        if self._index is not None:
+            return self._index
+        self._index = {}
+        manifest = self.bank_dir / "manifest.json"
+        if not manifest.is_file():
+            return self._index
+        try:
+            data = json.loads(manifest.read_text("utf-8"))
+        except (OSError, ValueError) as exc:
+            LOG.warning("voice bank manifest unreadable: %s", exc)
+            return self._index
+        for key, rel in (data.get("clips") or {}).items():
+            clip = self.bank_dir / str(rel)
+            if clip.is_file():
+                self._index[self.normalize(str(key))] = clip
+        return self._index
+
+    def available(self) -> bool:
+        return bool(self._load())
+
+    def synthesize(self, text: str, out: Path) -> bool:
+        clip = self._load().get(self.normalize(text or ""))
+        if clip is None:
+            return False
+        try:
+            shutil.copyfile(clip, out)
+        except OSError as exc:
+            LOG.warning("voice bank clip copy failed: %s", exc)
+            return False
+        return out.is_file() and out.stat().st_size > 0
+
+
+class ChainBackend(Backend):
+    """Try backends in order; the first that produces audio wins."""
+
+    name = "chain"
+
+    def __init__(self, backends: list[Backend]):
+        self.backends = list(backends)
+
+    def available(self) -> bool:
+        return any(backend.available() for backend in self.backends)
+
+    def set_params(self, **params: float) -> None:
+        for backend in self.backends:
+            setter = getattr(backend, "set_params", None)
+            if callable(setter):
+                setter(**params)
+
+    def synthesize(self, text: str, out: Path) -> bool:
+        for backend in self.backends:
+            if backend.available() and backend.synthesize(text, out):
+                return True
+        return False
+
+
+def find_bank() -> Path | None:
+    """Look for the packaged voice bank (its manifest.json marks the spot)."""
+    candidates = [
+        DEFAULT_VOICE_DIR / "bank",
+        Path("/opt/bunbun/voices/bank"),
+        Path(__file__).resolve().parents[2] / "assets" / "voice-bank",
+    ]
+    for candidate in candidates:
+        if (candidate / "manifest.json").is_file():
+            return candidate
+    return None
+
+
 class NullBackend(Backend):
     name = "null"
 
@@ -139,15 +233,26 @@ def detect(config) -> Backend:  # noqa: ANN001 - AgentConfig, avoid import cycle
     mode = (config.tts_backend or "auto").lower()
     if mode == "none":
         return NullBackend()
+    chain: list[Backend] = []
+    if mode in {"auto", "bank"}:
+        bank_dir = Path(config.voice_bank) if config.voice_bank else find_bank()
+        if bank_dir:
+            bank = VoiceBankBackend(bank_dir)
+            if bank.available():
+                chain.append(bank)
+            elif mode == "bank":
+                LOG.warning("voice bank requested but unavailable (dir=%s)", bank_dir)
     model = config.piper_model or find_voice(config.voice)
     if mode in {"auto", "piper"}:
         piper = PiperBackend(model, speaker=getattr(config, "voice_speaker", None))
         if piper.available():
-            return piper
-        if mode == "piper":
+            chain.append(piper)
+        elif mode == "piper":
             LOG.warning("piper requested but unavailable (model=%s)", model)
     espeak = EspeakBackend()
-    if espeak.available():
-        return espeak
-    LOG.warning("no TTS backend available; Bun Bun will be silent")
-    return NullBackend()
+    if mode in {"auto", "espeak"} and espeak.available():
+        chain.append(espeak)
+    if not chain:
+        LOG.warning("no TTS backend available; Bun Bun will be silent")
+        return NullBackend()
+    return chain[0] if len(chain) == 1 else ChainBackend(chain)

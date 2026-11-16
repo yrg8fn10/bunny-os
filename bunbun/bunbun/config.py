@@ -45,6 +45,7 @@ class AgentConfig:
     whisper_model: Path | None = None  # local whisper.cpp model; never bundled
     mic_device: str = ""            # PipeWire target; empty = default source
     piper_model: Path | None = None
+    voice_bank: Path | None = None  # pre-rendered v2 voice bank; auto-found when None
     tick_seconds: float = 4.0
     max_utterance_chars: int = 180
     log_level: str = "INFO"
@@ -117,6 +118,7 @@ def load_config(settings_file: Path | None = None,
         memory_enabled=_coerce_bool(pick("memory_enabled", cfg.memory_enabled),
                                     cfg.memory_enabled),
         tts_backend=str(pick("tts_backend", cfg.tts_backend)),
+        voice_bank=_optional_path(pick("voice_bank", None)),
         mic_enabled=_coerce_bool(pick("mic_enabled", cfg.mic_enabled), cfg.mic_enabled),
         mic_push_to_talk=_coerce_bool(pick("mic_push_to_talk", cfg.mic_push_to_talk),
                                       cfg.mic_push_to_talk),
@@ -141,6 +143,8 @@ def load_config(settings_file: Path | None = None,
         cfg = replace(cfg, tts_backend=env["BUNBUN_TTS"])
     if "BUNBUN_PIPER_MODEL" in env:
         cfg = replace(cfg, piper_model=Path(env["BUNBUN_PIPER_MODEL"]))
+    if "BUNBUN_VOICE_BANK" in env:
+        cfg = replace(cfg, voice_bank=Path(env["BUNBUN_VOICE_BANK"]))
     if "BUNBUN_LOG_LEVEL" in env:
         cfg = replace(cfg, log_level=env["BUNBUN_LOG_LEVEL"])
     if "BUNBUN_DISABLE" in env:

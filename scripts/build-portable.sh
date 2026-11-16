@@ -149,6 +149,13 @@ sha_ok "${VOICE_CACHE}/bunny-default.onnx.json" "${VOICE_JSON_SHA256}" || die "v
 mkdir -p "${STAGE}/voice"
 cp -a "${VOICE_CACHE}/piper" "${STAGE}/voice/piper"
 cp -a "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_CACHE}/bunny-default.onnx.json" "${STAGE}/voice/"
+# Bun Bun's real voice: the pre-rendered v2 voice bank (103 clips, Kokoro af_sky
+# wearing Ava's own voice color). The engine's find_bank() looks for it at
+# /usr/share/bunbun/voices/bank; the installer places it there.
+[[ -d "${ROOT}/bunbun/assets/voice-bank" && -f "${ROOT}/bunbun/assets/voice-bank/manifest.json" ]] \
+  || die "voice bank missing: bunbun/assets/voice-bank"
+mkdir -p "${STAGE}/voice/bank"
+cp -a "${ROOT}/bunbun/assets/voice-bank/." "${STAGE}/voice/bank/"
 cat > "${STAGE}/voice/VOICE-NOTE.txt" <<'EOF'
 Bun Bun's default voice is the "THV" speaker (speaker id 1) of Piper's
 en_US-l2arctic-medium model: a real person reading English with a gentle

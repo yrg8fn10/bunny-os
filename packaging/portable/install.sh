@@ -200,12 +200,14 @@ if [[ -f "${HERE}/voice/bunny-default.onnx" ]]; then
   run cp -a "${HERE}/voice/piper/." "${DESTDIR}${LIB}/piper/"
   run install -m 0644 "${HERE}/voice/bunny-default.onnx" "${DESTDIR}/usr/share/bunbun/voices/bunny-default.onnx"
   run install -m 0644 "${HERE}/voice/bunny-default.onnx.json" "${DESTDIR}/usr/share/bunbun/voices/bunny-default.onnx.json"
+  run install -d -m 0755 "${DESTDIR}/usr/share/bunbun/voices/bank"
+  run cp -a "${HERE}/voice/bank/." "${DESTDIR}/usr/share/bunbun/voices/bank/"
   put "${DESTDIR}${BIN}/piper" <<EOF
 #!/bin/sh
 exec env LD_LIBRARY_PATH="${LIB}/piper\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}" "${LIB}/piper/piper" "\$@"
 EOF
   run chmod 0755 "${DESTDIR}${BIN}/piper"
-  info "voice    : piper + bunny-default (human-sounding, all local)"
+  info "voice    : piper + bunny-default + v2 voice bank (Bun Bun's real voice, all local)"
 else
   warn "voice payload missing; Bun Bun falls back to espeak-ng"
 fi
