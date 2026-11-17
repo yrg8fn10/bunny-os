@@ -46,7 +46,7 @@ class AgentConfig:
     mic_device: str = ""            # PipeWire target; empty = default source
     curiosity_enabled: bool = True  # the get-to-know-you layer (Ava, Nov 17 2026); asks are rare and local-only
     curiosity_minutes_into_session: float = 12.0  # warm-up before her first question in a session
-    curiosity_max_per_week: int = 5  # hard cap on questions per rolling week
+    curiosity_max_per_week: int = 0  # 0 = unlimited (Ava's ask, Nov 17 2026); set a number to cap questions per rolling week
     piper_model: Path | None = None
     voice_bank: Path | None = None  # pre-rendered v2 voice bank; auto-found when None
     tick_seconds: float = 4.0

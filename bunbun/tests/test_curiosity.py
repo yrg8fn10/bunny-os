@@ -83,6 +83,14 @@ class TestCuriosity(unittest.TestCase):
         c.session_start("mc", now=2000.0)  # same week
         self.assertIsNone(c.maybe_ask(now=2100.0))
 
+    def test_cap_zero_is_unlimited(self):
+        c = make(curiosity_max_per_week=0)
+        for i in range(4):
+            c.session_start("mc", now=1000.0 + i * 100000)
+            q = c.maybe_ask(now=1000.0 + i * 100000 + 700)
+            self.assertIsNotNone(q)
+            self.assertIsNotNone(c.absorb("nice", now=1001.0 + i * 100000))
+
     def test_off_switch(self):
         c = make(curiosity_enabled=False)
         c.session_start("mc", now=1000.0)

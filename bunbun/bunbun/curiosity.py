@@ -7,8 +7,10 @@ color how she helps later (reminders, flavor, presence).
 
 Guardrails (deliberate, not optional; Ava asked for this build to be careful):
 
-- ASKS ARE RARE.  At most one question per game session, never in the first
-  minutes (a warm-up delay), and a hard cap per rolling week.
+- ASKS ARE RARE IN THE MOMENT.  At most one question per game session and
+  never in the first minutes (a warm-up delay).  An optional per-week cap
+  exists for anyone who wants one; it defaults OFF (0 = unlimited), Ava's
+  call on Nov 17, 2026: she loves hearing Bun Bun be curious.
 - SHE NEVER NAGS.  A question is asked exactly once.  Silence, a shrug, or
   an answer all close it the same way; she never re-asks, never follows up,
   and never presses.
@@ -125,9 +127,9 @@ class Curiosity:
         now = time.time() if now is None else now
         if now < self._warm_until:
             return None
-        cap = int(getattr(self.config, "curiosity_max_per_week", 5))
-        if self._asked_in_week(now) >= cap:
-            return None
+        cap = int(getattr(self.config, "curiosity_max_per_week", 0))
+        if cap > 0 and self._asked_in_week(now) >= cap:
+            return None  # 0 = unlimited
         asked = self._asked_ids()
         fresh = [q for q in self._bank if q.qid not in asked]
         if not fresh:
