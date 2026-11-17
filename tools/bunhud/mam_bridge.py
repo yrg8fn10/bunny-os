@@ -3,7 +3,8 @@
 
 Connects to the companion service's local SSE stream
 (127.0.0.1:8422/v1/stream) and turns MAM bus events into bunhud
-commands: the game started, she appears; the agent stopped, she hides.
+commands: the game started, she appears; the agent stopped, she hides;
+you spoke, her ears perk up (the "listen" face) so you can see she heard.
 A future revision will drive hint bubbles from "bunbun.spoken".
 
 Localhost only. bunhud never talks to the network, with or without
@@ -22,6 +23,7 @@ TOPIC_COMMANDS = {
     "game.started": "show",
     "agent.started": "show",
     "bunbun.spoken": "show",
+    "player.spoke": "listen",
     "agent.stopped": "hide",
 }
 

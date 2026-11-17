@@ -32,3 +32,23 @@ body {
 [class*="Panel_Section"], [class*="quickaccess"] {
   box-shadow: 0 6px 24px rgba(255,179,217,0.18) !important;
 }
+
+/* The game's own artwork must not cover Bun Bun's wallpaper on the home
+   screen. The focused game's backdrop layers sit between the wallpaper
+   and the UI, so they go transparent here. First cut: tuned against the
+   Steam client's class names, one screenshot away from a tune-up. */
+[class*="gamepadhome_ScrollArea"] [class*="BackgroundScreenshot"],
+[class*="RecentGamesBackgroundContainer"],
+[class*="singleapplication_SingleAppBackground"],
+[class*="singleappbackground_"],
+[class*="gamepadhomerecentgames_RecentGamesInnerContainer"] > * {
+  background-image: none !important;
+  background-color: transparent !important;
+}
+
+/* In-game pause menu keeps its art soft instead of solid, so the
+   wallpaper breathes through there too. */
+[class*="mainmenuapprunning_CurrentGameBackground_"] {
+  background-image: none !important;
+  background-color: rgba(36, 22, 51, 0.55) !important;
+}

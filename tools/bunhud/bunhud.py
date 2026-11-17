@@ -20,6 +20,7 @@ import os
 import select
 import socket
 import sys
+import time
 from pathlib import Path
 
 from pywayland.client import Display
@@ -44,6 +45,7 @@ ANCHORS = {
     "top-right": 1 | 8,
 }
 DEFAULT_MARGIN = 16
+LISTEN_SECONDS = 6.0  # how long her ears stay perked after she hears you
 
 
 def sprite_to_argb(img) -> bytes:
@@ -90,8 +92,11 @@ def load_sprite(path: str):
 
 
 class Bunhud:
-    def __init__(self, sprite_path: str, corner: str, scale: int, mam_host: str | None = None, mam_port: int = 8422):
+    def __init__(self, sprite_path: str, corner: str, scale: int,
+                 listening_sprite: str | None = None,
+                 mam_host: str | None = None, mam_port: int = 8422):
         self.sprite_path = sprite_path
+        self.listening_sprite = listening_sprite
         self.corner = corner if corner in ANCHORS else "bottom-left"
         self.scale = scale
         # MAM hookup: the companion service's bus drives show/hide.
@@ -106,6 +111,8 @@ class Bunhud:
         self.sprite_h = 0
         self.shown = True
         self.configured = None
+        self.listen_buffer = None
+        self.listening_until = 0.0
 
     def bind_all(self, registry, name, iface, version):
         if iface == "wl_compositor":
@@ -138,6 +145,7 @@ class Bunhud:
             try:
                 display = Display(name=name)
                 display.connect()
+                print(f"bunhud: connected to Wayland display '{name}'")
                 return display
             except Exception as e:
                 errors.append(f"{name}: {e}")
@@ -166,6 +174,22 @@ class Bunhud:
         os.write(fd, data)
         pool = self.shm.create_pool(fd, len(data))
         self.buffer = pool.create_buffer(0, w, h, w * 4, WlShm.format.argb8888, 0)
+
+        # Her listening face: same size, so the layer surface never changes.
+        if self.listening_sprite and os.path.exists(self.listening_sprite):
+            ldata, lw, lh = load_sprite(self.listening_sprite)
+            if (lw, lh) == (w, h):
+                lfd = os.memfd_create("bunhud-listening")
+                os.write(lfd, ldata)
+                lpool = self.shm.create_pool(lfd, len(ldata))
+                self.listen_buffer = lpool.create_buffer(
+                    0, lw, lh, lw * 4, WlShm.format.argb8888, 0
+                )
+            else:
+                print(
+                    "bunhud: listening sprite is "
+                    f"{lw}x{lh}, idle is {w}x{h}; ear perk stays off"
+                )
 
         self.surface = self.compositor.create_surface()
         self.layer_surface = self.layer_shell.get_layer_surface(
@@ -215,6 +239,26 @@ class Bunhud:
         self.surface.attach(None, 0, 0)
         self.surface.commit()
 
+    def start_listening(self):
+        """She heard you: swap to the perked-ear face for a moment."""
+        if self.listen_buffer is None:
+            return
+        self.listening_until = time.monotonic() + LISTEN_SECONDS
+        if self.shown:
+            self.surface.attach(self.listen_buffer, 0, 0)
+            self.surface.damage(0, 0, self.sprite_w, self.sprite_h)
+            self.surface.commit()
+
+    def settle_ears(self):
+        """Back to the idle face once the perk has had its moment."""
+        if not self.listening_until:
+            return
+        if time.monotonic() <= self.listening_until:
+            return
+        self.listening_until = 0.0
+        if self.shown and self.listen_buffer is not None:
+            self.show()
+
     def loop(self) -> int:
         ctrl = self.control_socket()
         running = True
@@ -235,6 +279,7 @@ class Bunhud:
         try:
             while running:
                 self.display.dispatch()
+                self.settle_ears()
                 self.drain_mam()
                 if not self.serve_control():
                     running = False
@@ -276,6 +321,8 @@ class Bunhud:
                 self.show()
             elif command == "hide":
                 self.hide()
+            elif command == "listen":
+                self.start_listening()
 
     def serve_control(self) -> bool:
         """One line per client: show, hide, ping, quit."""
@@ -290,6 +337,8 @@ class Bunhud:
                 self.hide()
             elif line == "show":
                 self.show()
+            elif line == "listen":
+                self.start_listening()
             elif line == "ping":
                 reply = "bunhud alive, shown=" + str(self.shown).lower()
             elif line == "quit":
@@ -306,6 +355,11 @@ def main() -> int:
         "--sprite",
         default=str(_TOOLS / "assets" / "bunhud-placeholder.png"),
         help="PNG with alpha to draw as Bun Bun",
+    )
+    parser.add_argument(
+        "--listening-sprite",
+        default=str(_TOOLS / "assets" / "bunhud-listening.png"),
+        help="PNG with alpha drawn while she is listening (ear perk)",
     )
     parser.add_argument(
         "--corner",
@@ -326,6 +380,7 @@ def main() -> int:
         args.sprite,
         args.corner,
         args.scale,
+        listening_sprite=args.listening_sprite,
         mam_host=args.mam_host if args.mam else None,
         mam_port=args.mam_port,
     )

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..bus import EventBus
-from . import heroic, steam
+from . import heroic, minecraft, steam
 
 LOG = logging.getLogger("bunbun.watcher")
 
@@ -84,6 +84,10 @@ class GameWatcher(threading.Thread):
 
         running = steam.running_game(self._games)
         anticheat = steam.anticheat_running() if running else False
+        if running is None:
+            # Minecraft and friends: Java launchers Steam and Heroic
+            # never see, but a game session all the same.
+            running = minecraft.running_game()
 
         if running is None:
             if self.snapshot.game_id:
