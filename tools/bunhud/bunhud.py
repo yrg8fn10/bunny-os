@@ -117,12 +117,38 @@ class Bunhud:
                 name, ZwlrLayerShellV1, min(version, 4)
             )
 
+    def _connect_display(self):
+        """Connect to the compositor, trying every socket a session might use.
+
+        Desktop sessions expose wayland-0; Game Mode runs under gamescope,
+        whose socket (gamescope-0) the user systemd unit often cannot see
+        through WAYLAND_DISPLAY. Only sockets that actually exist in
+        XDG_RUNTIME_DIR are tried, in that order; nothing is guessed.
+        """
+        candidates = []
+        env = os.environ.get("WAYLAND_DISPLAY")
+        if env:
+            candidates.append(env)
+        candidates.extend(["wayland-0", "gamescope-0", "gamescope-1"])
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        errors = []
+        for name in candidates:
+            if not os.path.exists(os.path.join(runtime, name)):
+                continue
+            try:
+                display = Display(name=name)
+                display.connect()
+                return display
+            except Exception as e:
+                errors.append(f"{name}: {e}")
+        if errors:
+            print(f"bunhud: Wayland connect attempts: {'; '.join(errors)}")
+        return None
+
     def run(self) -> int:
-        self.display = Display()
-        try:
-            self.display.connect()
-        except Exception as e:
-            print(f"bunhud: cannot reach a Wayland display ({e}); exiting")
+        self.display = self._connect_display()
+        if self.display is None:
+            print("bunhud: cannot reach a Wayland display; exiting")
             return 1
         self.compositor = self.shm = self.layer_shell = None
         registry = self.display.get_registry()

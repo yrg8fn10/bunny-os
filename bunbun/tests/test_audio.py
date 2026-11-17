@@ -6,17 +6,20 @@ from bunbun.audio.router import AudioRouter
 from bunbun.config import AgentConfig
 
 
-def test_mic_disabled_by_default():
+def test_mic_enabled_by_default_session_gated():
+    # Ava's Nov 3 design: ears on during game sessions, no push-to-talk.
     cfg = AgentConfig()
-    assert cfg.mic_enabled is False
+    assert cfg.mic_enabled is True
+    assert cfg.mic_push_to_talk is False
     mic = MicCapture(cfg)
-    assert mic.allowed is False
-    assert mic.open_window() is False
+    assert mic.allowed is True
+    # The session gate still holds: nothing is captured outside a game session.
     assert mic.capture(1.0) is None
 
 
 def test_capture_requires_open_window():
-    cfg = AgentConfig(mic_enabled=True)
+    # Push-to-talk remains an opt-in mode; it needs its explicit test config.
+    cfg = AgentConfig(mic_enabled=True, mic_push_to_talk=True)
     mic = MicCapture(cfg)
     assert mic.capture(1.0) is None          # gate 2 closed
     assert mic.open_window() is True

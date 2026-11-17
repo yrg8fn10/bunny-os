@@ -12,6 +12,7 @@ After=graphical-session.target bunny-bunbun.service
 [Service]
 Type=simple
 ExecStart=/usr/bin/python3 /opt/bunbun/tools/bunhud/bunhud.py --mam --sprite /opt/bunbun/tools/bunhud/assets/bunhud-placeholder.png
+Environment=PYTHONPATH=/opt/bunbun/tools/bunhud/pylibs:/opt/bunbun/tools/bunhud
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=3s

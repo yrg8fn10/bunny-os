@@ -37,8 +37,8 @@ class AgentConfig:
     local_only: bool = True
     memory_enabled: bool = True
     tts_backend: str = "auto"       # auto|piper|espeak|none
-    mic_enabled: bool = False       # never hot by default; see audio/mic.py
-    mic_push_to_talk: bool = True   # capture only inside an explicit window
+    mic_enabled: bool = True        # ears on during sessions per Ava's Nov 3 design; gates still apply
+    mic_push_to_talk: bool = False  # no push-to-talk per Ava's Nov 3 design; the session gate decides
     mic_stt: str = "auto"           # auto|whisper|none (local only)
     mic_listen_mode: str = "session"  # session|always (pre10: ears stay open)
     mic_poll_seconds: float = 1.5   # cadence of the listening loop

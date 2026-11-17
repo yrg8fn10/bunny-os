@@ -7,7 +7,7 @@ the audio, and she only comes back for game talk.
 
 Capture still passes gates, in order:
 
-1. ``mic_enabled`` in settings (default: **False**);
+1. ``mic_enabled`` in settings (default: **True**, session mode per Ava's Nov 3 design: ears open during game sessions, closed everywhere else);
 2. scope: in push-to-talk mode an open listening window; in session mode an
    *active game session* (never the desktop, never while idle);
 3. the privacy cooldown after a private-topic hit;
@@ -235,5 +235,10 @@ def build_stt(config):
     if which in {"none", "off"}:
         return None
     model = getattr(config, "whisper_model", None)
+    if model is None:
+        # The image ships a tiny.en model at this path; fall back to it so the
+        # ears work with zero configuration. A settings model always wins.
+        shipped = Path("/usr/share/bunbun/stt/ggml-tiny.en-q5_1.bin")
+        model = shipped if shipped.is_file() else None
     backend = WhisperBackend(model=model)
     return backend if backend.available() else None
