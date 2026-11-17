@@ -74,11 +74,21 @@ if [[ -f /run/ostree-booted ]]; then
   fi
 
   if (( CHECK_ONLY )); then
+    if [[ -f /usr/share/bunny-os/image-mode ]]; then
+      log "image channel system: updates come through the image channel, not this updater."
+      log "check for one with: sudo rpm-ostree upgrade   (the image updater checks on its own timer)"
+      exit 0
+    fi
     ostree admin upgrade --preview >/dev/null 2>&1 || log "image channel unreachable; payload update above is the channel for now"
     exit 0
   fi
   if ! ostree admin upgrade 2>/dev/null; then
-    log "image channel unreachable (docs/BAZZITE.md); the payload update above is the channel for now"
+    if [[ -f /usr/share/bunny-os/image-mode ]]; then
+      log "image channel system: this updater stays retired here."
+      log "pull the channel yourself with: sudo rpm-ostree upgrade"
+    else
+      log "image channel unreachable (docs/BAZZITE.md); the payload update above is the channel for now"
+    fi
   else
     log "new deployment staged; reboot to activate (old image kept for rollback)"
   fi
