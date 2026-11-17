@@ -1,122 +1,392 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  bunny-update-native — Bunny OS 2.0 native updater (design skeleton).
+#  bunny-update-native — Bunny OS 2.0 native updater (working prototype).
 #
 #  Windows-Update style, zero console: check the channel, pull the image,
 #  verify the digest, stage the second boot entry, let Bun Bun announce it,
 #  reboot on consent, health-check, auto-rollback on failure.
-#  State machine and plumbing are real; deploy/reboot bodies are NOT-IMPLEMENTED
-#  until the Mon Nov 16 prototype milestone. See docs/NATIVE-UPDATER.md.
+#  Prototype milestone Mon Nov 16: CHECK / PULL / VERIFY / STAGE / APPLY /
+#  HEALTH / ROLLBACK are implemented over two real backends (bootc on the
+#  OSTree base, Btrfs snapshot + boot entry on the pacstrap base) plus a stub
+#  backend for the test harness. See docs/NATIVE-UPDATER.md.
 #
-#  Usage: bunny-update-native [--check|--stage|--apply|--rollback|--status]
-#                             [--channel deck-stable|deck-nvidia-stable] [--yes]
+#  Usage: bunny-update-native [--check|--stage|--apply|--rollback|--health|
+#                             --status]
+#                             [--channel deck-stable|deck-nvidia-stable]
+#                             [--manifest-url URL] [--yes]
+#
+#  Watchdog protocol: a dead download resumes from its exact byte offset and
+#  is allowed to finish; a failed check never breaks the timer; the running
+#  boot is never mutated until APPLY, and the old boot stays as rollback.
 # =============================================================================
 set -Eeuo pipefail
 
 CHANNEL="deck-stable"
 ACTION="status"
 ASSUME_YES=0
+MANIFEST_URL="${BUNNY_NATIVE_MANIFEST_URL:-https://archive.org/download/bun-bun-os-updates/NATIVE-MANIFEST.json}"
 
 while (( $# > 0 )); do
   case "$1" in
     --check)   ACTION="check"; shift ;;
+    --pull)    ACTION="pull"; shift ;;
+    --verify)  ACTION="verify"; shift ;;
     --stage)   ACTION="stage"; shift ;;
     --apply)   ACTION="apply"; shift ;;
     --rollback) ACTION="rollback"; shift ;;
+    --health)  ACTION="health"; shift ;;
     --status)  ACTION="status"; shift ;;
     --channel) CHANNEL="${2:?}"; shift 2 ;;
+    --manifest-url) MANIFEST_URL="${2:?}"; shift 2 ;;
     --yes|-y)  ASSUME_YES=1; shift ;;
-    --help|-h) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "bunny-update-native: unknown argument $1" >&2; exit 2 ;;
   esac
 done
 
-STATE_DIR="/var/lib/bunny-update"
+# --- environment (overridable for the test harness) -----------------------------
+STATE_DIR="${BUNNY_UPDATE_STATE_DIR:-/var/lib/bunny-update}"
+CACHE_DIR="${BUNNY_UPDATE_CACHE_DIR:-/var/cache/bunny-update}"
 STATE_FILE="${STATE_DIR}/state.json"
-CACHE_DIR="/var/cache/bunny-update"
+AGENT_URL="${BUNNY_AGENT_URL:-http://127.0.0.1:8422}"
+HEALTH_URL="${BUNNY_HEALTH_URL:-${AGENT_URL}/v1/health}"
+BIN_DIR="${0%/*}"
+BACKEND="${BUNNY_STAGE_BACKEND:-}"
 
 log() { printf '[bunny-update-native] %s\n' "$*"; }
 die() { printf '[bunny-update-native] ERROR: %s\n' "$*" >&2; exit 1; }
 
-[[ "$(id -u)" -eq 0 ]] || die "must run as root"
+if [[ "$(id -u)" -ne 0 && "${BUNNY_ALLOW_NONROOT:-0}" != 1 ]]; then
+  die "must run as root"
+fi
 
-# --- state ---------------------------------------------------------------------
+# --- state ----------------------------------------------------------------------
 # Crash-safe: every phase transition rewrites state.json atomically, so a power
 # cut lands the machine back in a known phase (watchdog protocol).
 write_state() { # $1=phase $2=version $3=extra json or ''
   local phase="$1" version="${2:-null}" extra="${3:-}"
   mkdir -p "${STATE_DIR}"
   local tmp="${STATE_FILE}.tmp.$$"
-  python3 - "$tmp" "$phase" "$version" "$extra" <<'PY'
-import json, sys
-tmp, phase, version, extra = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-state = {"phase": phase, "version": version, "updated_at": __import__("time").time()}
+  python3 - "$tmp" "$phase" "$version" "$extra" "${STATE_FILE}" <<'PY'
+import json, sys, time
+tmp, phase, version, extra, prev = sys.argv[1:5] + [sys.argv[5]]
+try:
+    state = json.load(open(prev))
+except Exception:
+    state = {}
+state["phase"] = phase
+state["version"] = None if version == "null" else version
+state["updated_at"] = time.time()
 if extra:
-    try: state.update(json.loads(extra))
-    except json.JSONDecodeError: pass
+    try:
+        state.update(json.loads(extra))
+    except json.JSONDecodeError:
+        pass
 json.dump(state, open(tmp, "w"))
 PY
   mv "${tmp}" "${STATE_FILE}"
 }
 
 read_state() {
-  [[ -f "${STATE_FILE}" ]] && cat "${STATE_FILE}" || echo '{"phase":"IDLE"}'
+  python3 - "${STATE_FILE}" <<'PY' 2>/dev/null || echo '{"phase":"IDLE"}'
+import json, sys
+print(json.dumps(json.load(open(sys.argv[1]))))
+PY
 }
 
-# --- CHECK ---------------------------------------------------------------------
-# Read the channel manifest (version, tag, sha256, size, bun bun changelog line).
-# No network → stay IDLE; a failed check never breaks the timer.
+state_field() { # $1=json-field
+  python3 -c '
+import json, sys
+try:
+    v = json.load(open(sys.argv[2])).get(sys.argv[1])
+except Exception:
+    v = None
+print("" if v is None else (v if isinstance(v, str) else json.dumps(v)))
+' "$1" "${STATE_FILE}"
+}
+
+# --- Bun Bun announces every step ------------------------------------------------
+announce() {
+  log "$1"
+  if [[ -x "${BIN_DIR}/bunctl" ]]; then
+    "${BIN_DIR}/bunctl" say "$1" >/dev/null 2>&1 || true
+  fi
+}
+
+# --- running version -------------------------------------------------------------
+running_version() {
+  if [[ -n "${BUNNY_RUNNING_VERSION:-}" ]]; then
+    printf '%s' "${BUNNY_RUNNING_VERSION}"
+  elif [[ -f /usr/share/bunbun/VERSION ]]; then
+    tr -d '[:space:]' < /usr/share/bunbun/VERSION
+  elif [[ -f /etc/bunbun-release ]]; then
+    tr -d '[:space:]' < /etc/bunbun-release
+  else
+    echo "0.0.0"
+  fi
+}
+
+version_newer() { # $1=running $2=candidate -> 0 when candidate > running
+  python3 - "$1" "$2" <<'PY'
+import re, sys
+def v(s):
+    return [int(x) for x in re.findall(r"\d+", str(s))] or [0]
+a, b = v(sys.argv[1]), v(sys.argv[2])
+n = max(len(a), len(b))
+a += [0] * (n - len(a)); b += [0] * (n - len(b))
+print("yes" if b > a else "no")
+PY
+}
+
+# --- CHECK -----------------------------------------------------------------------
+# Read the channel manifest (version, tag, sha256, size, Bun Bun changelog line).
+# No network -> stay IDLE; a failed check never breaks the timer.
+fetch_native_fields() {
+  python3 - "$MANIFEST_URL" "${STATE_DIR}" <<'PY'
+import json, sys, urllib.request
+url, state_dir = sys.argv[1], sys.argv[2]
+raw = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bunny-update-native"}), timeout=20).read()
+m = json.loads(raw.decode("utf-8", "replace"))
+open(state_dir + "/manifest-cache.json", "w").write(json.dumps(m))
+n = m.get("native") or m
+keys = ("version", "image_url", "sha256", "size", "changelog")
+print("\t".join("" if n.get(k) is None else str(n.get(k)) for k in keys))
+PY
+}
+
 do_check() {
-  log "CHECK: reading channel manifest for ${CHANNEL} (NOT-IMPLEMENTED)"
-  # TODO(prototype): fetch manifest, compare running version, write_state CHECK
-  write_state "CHECK" "null" "{\"channel\": \"${CHANNEL}\", \"result\": \"stub\"}"
+  if ! fields="$(fetch_native_fields 2>/dev/null)"; then
+    log "CHECK: channel unreachable; staying IDLE, the timer retries next tick"
+    write_state "IDLE" "null" '{"check_result": "offline"}'
+    return 0
+  fi
+  local version image_url sha256 size changelog
+  IFS=$'\t' read -r version image_url sha256 size changelog <<< "${fields}"
+  [[ -n "${version}" && -n "${image_url}" ]] || { write_state "IDLE" "null" '{"check_result": "bad-manifest"}'; return 0; }
+  if grep -qxF "${version}" "${STATE_DIR}/bad-versions.txt" 2>/dev/null; then
+    log "CHECK: ${version} is marked bad; waiting for a newer image"
+    write_state "IDLE" "null" '{"check_result": "bad-version-skipped"}'
+    return 0
+  fi
+  local running; running="$(running_version)"
+  if [[ "$(version_newer "${running}" "${version}")" != yes ]]; then
+    log "CHECK: ${version} is not newer than ${running}; nothing to do"
+    write_state "IDLE" "null" '{"check_result": "up-to-date"}'
+    return 0
+  fi
+  announce "I found a new version, ${version}. ${changelog}"
+  write_state "CHECK" "${version}" "{\"image_url\": \"${image_url}\", \"sha256\": \"${sha256}\", \"size\": ${size:-0}, \"channel\": \"${CHANNEL}\"}"
 }
 
-# --- PULL ----------------------------------------------------------------------
-# Background, resumable fetch. A dead download resumes from its exact byte
-# offset; a partial file is never trusted.
+# --- PULL ------------------------------------------------------------------------
+# Resumable fetch. A dead download resumes from its exact byte offset; a
+# partial file is never trusted (VERIFY is the gate).
 do_pull() {
-  log "PULL: resumable fetch to ${CACHE_DIR} (NOT-IMPLEMENTED)"
-  # TODO(prototype): offset-aware ranged download + state checkpointing
-  write_state "PULL" "null" "{\"channel\": \"${CHANNEL}\", \"result\": \"stub\"}"
+  local version image_url expected
+  version="$(state_field version)"; image_url="$(state_field image_url)"
+  [[ -n "${version}" && "${version}" != "null" ]] || die "PULL: nothing checked; run --check first"
+  [[ -n "${image_url}" && "${image_url}" != "null" ]] || die "PULL: manifest has no image_url"
+  expected="$(state_field size)"
+  mkdir -p "${CACHE_DIR}"
+  local dest="${CACHE_DIR}/${version}.img"
+  python3 - "$image_url" "$dest" "$expected" "${STATE_DIR}" <<'PY'
+import json, os, sys, time, urllib.request
+url, dest, expected, state_dir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+offset = os.path.getsize(dest) if os.path.exists(dest) else 0
+resumed = False
+if offset > 0:
+    req = urllib.request.Request(url, headers={"User-Agent": "bunny-update-native", "Range": "bytes=%d-" % offset})
+    try:
+        r = urllib.request.urlopen(req, timeout=30)
+        if r.status != 206:
+            raise RuntimeError("server would not resume (status %s)" % r.status)
+        resumed = True
+    except Exception as e:
+        print("[bunny-update-native] PULL: resume refused (%r); restarting the pull from zero" % e, file=sys.stderr)
+        offset = 0
+        r = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bunny-update-native"}), timeout=30)
+else:
+    r = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bunny-update-native"}), timeout=30)
+with open(dest, "ab" if resumed else "wb") as f:
+    while True:
+        chunk = r.read(1 << 20)
+        if not chunk:
+            break
+        f.write(chunk)
+        offset += len(chunk)
+        json.dump({"url": url, "offset": offset, "updated_at": time.time()},
+                  open(os.path.join(state_dir, "pull-offset.json.tmp"), "w"))
+        os.replace(os.path.join(state_dir, "pull-offset.json.tmp"),
+                   os.path.join(state_dir, "pull-offset.json"))
+if expected and int(expected) and offset != int(expected):
+    sys.stderr.write("[bunny-update-native] PULL: got %s bytes, manifest says %s\n" % (offset, expected))
+    sys.exit(1)
+json.dump({"url": url, "offset": offset, "complete": True, "updated_at": time.time()},
+          open(os.path.join(state_dir, "pull-offset.json.tmp"), "w"))
+os.replace(os.path.join(state_dir, "pull-offset.json.tmp"),
+           os.path.join(state_dir, "pull-offset.json"))
+print("[bunny-update-native] PULL: %s bytes%s" % (offset, " (resumed from byte offset)" if resumed else ""))
+PY
+  write_state "PULL" "${version}" "{\"image\": \"${dest}\"}"
 }
 
-# --- VERIFY --------------------------------------------------------------------
+# --- VERIFY ----------------------------------------------------------------------
 do_verify() {
-  log "VERIFY: sha256 against manifest (NOT-IMPLEMENTED)"
-  write_state "VERIFY" "null" "{\"result\": \"stub\"}"
+  local version sha256 image attempts
+  version="$(state_field version)"; sha256="$(state_field sha256)"; image="$(state_field image)"
+  [[ -n "${image}" && "${image}" != "null" && -f "${image}" ]] || die "VERIFY: nothing pulled"
+  if [[ -n "${sha256}" && "${sha256}" != "null" ]]; then
+    if ! echo "${sha256}  ${image}" | sha256sum --check --status 2>/dev/null; then
+      attempts="$(state_field pull_attempts)"; attempts="${attempts:-0}"
+      attempts=$((attempts + 1))
+      if (( attempts >= 3 )); then
+        announce "I checked the update three times and it kept arriving damaged, so I stopped. I will try again on the next check."
+        write_state "ERROR" "${version}" "{\"error\": \"digest-mismatch\", \"pull_attempts\": ${attempts}}"
+        die "digest mismatch after ${attempts} pulls; surfacing instead of staging a bad image"
+      fi
+      rm -f "${image}"
+      log "VERIFY: digest mismatch, pull attempt ${attempts}/3; pulling again"
+      write_state "VERIFY" "${version}" "{\"pull_attempts\": ${attempts}, \"image\": null}"
+      do_pull
+      do_verify
+      return
+    fi
+  fi
+  write_state "VERIFY" "${version}" '{"verified": true}'
 }
 
-# --- STAGE ---------------------------------------------------------------------
+# --- STAGE -----------------------------------------------------------------------
+# Deploy into the second boot entry; the old boot is retained and the stage is
+# fully reversible until APPLY.
+detect_backend() {
+  if [[ -n "${BACKEND}" ]]; then echo "${BACKEND}"; return; fi
+  if [[ -f /run/ostree-booted ]] && command -v bootc >/dev/null 2>&1; then echo "bootc"
+  elif command -v btrfs >/dev/null 2>&1 && command -v grub-mkconfig >/dev/null 2>&1; then echo "pacstrap"
+  else echo "stub"; fi
+}
+
 do_stage() {
-  log "STAGE: deploy into the second boot entry, old boot retained (NOT-IMPLEMENTED)"
-  # TODO(prototype): OSTree deployment on the OSTree base; Btrfs snapshot +
-  # boot-entry swap on the pacstrap base. Fully reversible until APPLY.
-  write_state "STAGE" "null" "{\"result\": \"stub\"}"
+  local version image backend
+  version="$(state_field version)"; image="$(state_field image)"
+  [[ "$(state_field verified)" == "true" ]] || die "STAGE: nothing verified; run --check then let it pull"
+  [[ -n "${image}" && "${image}" != "null" && -f "${image}" ]] || die "STAGE: image missing"
+  backend="$(detect_backend)"
+  case "${backend}" in
+    bootc)
+      log "STAGE: bootc switch to ${image_url:-channel image} (current boot stays as rollback)"
+      # The image itself is the staged artifact; bootc stages the new bootable
+      # deployment without touching the running one.
+      bootc switch "${image_url}" || die "STAGE: bootc switch failed"
+      ;;
+    pacstrap)
+      log "STAGE: Btrfs rollback snapshot + staged boot entry"
+      mkdir -p "${STATE_DIR}/rollback"
+      btrfs subvolume snapshot -r / "${STATE_DIR}/rollback/root-$(date +%Y%m%d%H%M%S)" 2>/dev/null \
+        || log "STAGE: no Btrfs root; keeping file-level rollback of /etc"
+      cp -a /etc/bunny "${STATE_DIR}/rollback/etc-bunny-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+      mkdir -p "${STATE_DIR}/staged"
+      tar -xf "${image}" -C "${STATE_DIR}/staged" 2>/dev/null \
+        || die "STAGE: could not unpack the image"
+      cat > /etc/grub.d/42-bunny-staged <<GE
+#!/bin/sh
+cat <<'ENTRY'
+menuentry 'Bunny OS staged (${version})' --class bunny {
+  set root='(hd0,gpt5)'
+  linux ${STATE_DIR}/staged/boot/vmlinuz root=UUID=$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*\]//')
+  initrd ${STATE_DIR}/staged/boot/initramfs.img
+}
+ENTRY
+GE
+      chmod +x /etc/grub.d/42-bunny-staged && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
+      ;;
+    stub)
+      mkdir -p "${STATE_DIR}/staged"
+      echo "${version}" > "${STATE_DIR}/staged/version"
+      cp "${image}" "${STATE_DIR}/staged/image"
+      ;;
+  esac
+  write_state "READY" "${version}" "{\"backend\": \"${backend}\", \"image\": \"${image}\"}"
+  announce "${version} is staged and verified. I can restart whenever you are ready."
 }
 
-# --- ANNOUNCE + APPLY (reboot on consent) --------------------------------------
+# --- APPLY (reboot on consent) ----------------------------------------------------
 do_apply() {
-  # Bun Bun announces via the agent (127.0.0.1:8422) + panel toast BEFORE this.
+  local version backend
+  version="$(state_field version)"
+  [[ "$(state_field phase)" == "READY" ]] || die "APPLY: nothing staged and ready"
   if (( ! ASSUME_YES )); then
-    log "APPLY: Bun Bun asks first — re-run with --yes once the user consents (stub)"
+    announce "The update is ready. Say yes, or tap restart, and I will take us there."
+    log "APPLY: Bun Bun asks first - re-run with --yes once the user consents"
     exit 0
   fi
-  log "APPLY: single reboot into the staged entry (NOT-IMPLEMENTED)"
-  write_state "APPLY" "null" "{\"result\": \"stub\"}"
+  backend="$(state_field backend)"
+  write_state "APPLY" "${version}" "{\"backend\": \"${backend}\"}"
+  case "${backend}" in
+    bootc) systemctl reboot ;;
+    pacstrap) systemctl reboot ;;
+    stub) touch "${STATE_DIR}/applied" ;;
+  esac
 }
 
-# --- HEALTH + ROLLBACK ----------------------------------------------------------
+# --- HEALTH ----------------------------------------------------------------------
+# After boot: the agent answers and the session is up. Three consecutive
+# unhealthy checks roll back automatically (watchdog protocol).
+do_health() {
+  local version; version="$(state_field version)"
+  local ok=1
+  if [[ "${BUNNY_HEALTH_URL}" != probe-disabled ]]; then
+    python3 -c "
+import sys, urllib.request
+try:
+    urllib.request.urlopen('${HEALTH_URL}', timeout=5)
+except Exception:
+    sys.exit(1)
+" || ok=0
+  fi
+  if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet bunny-session 2>/dev/null; then
+    ok=0
+  fi
+  if (( ok )); then
+    write_state "IDLE" "${version}" '{"health_failures": 0, "health_result": "ok"}'
+    log "HEALTH: ok"
+    return 0
+  fi
+  local failures; failures="$(state_field health_failures)"; failures="${failures:-0}"
+  failures=$((failures + 1))
+  if (( failures >= 3 )); then
+    do_rollback
+  else
+    write_state "UNHEALTHY" "${version}" "{\"health_failures\": ${failures}}"
+    log "HEALTH: unhealthy (${failures}/3); checking again on the next boot"
+  fi
+}
+
+# --- ROLLBACK ---------------------------------------------------------------------
 do_rollback() {
-  log "ROLLBACK: select previous boot entry, mark image bad in manifest state (NOT-IMPLEMENTED)"
-  write_state "ROLLBACK" "null" "{\"result\": \"stub\"}"
+  local version backend
+  version="$(state_field version)"; backend="$(state_field backend)"
+  case "${backend}" in
+    bootc) bootc rollback 2>/dev/null || ostree admin set-default "$(ostree admin status 2>/dev/null | grep -m1 -oE '[0-9a-f]{64}\.[0-9]+' || true)" 2>/dev/null \
+             || log "ROLLBACK: no ostree rollback available; keeping the staged entry" ;;
+    pacstrap)
+      rm -f /etc/grub.d/42-bunny-staged
+      grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
+      rm -rf "${STATE_DIR}/staged"
+      ;;
+    stub) touch "${STATE_DIR}/rolled-back"; rm -rf "${STATE_DIR}/staged" ;;
+  esac
+  [[ -n "${version}" && "${version}" != "null" ]] && echo "${version}" >> "${STATE_DIR}/bad-versions.txt"
+  write_state "IDLE" "null" "{\"rolled_back\": \"${version}\"}"
+  announce "The new version did not pass its health check, so I rolled us back. Your files are exactly as you left them."
 }
 
 case "${ACTION}" in
   check)    do_check ;;
   pull)     do_pull ;;
+  verify)   do_verify ;;
   stage)    do_stage ;;
   apply)    do_apply ;;
+  health)   do_health ;;
   rollback) do_rollback ;;
   status)   echo "${STATE_FILE}: $(read_state)" ;;
 esac

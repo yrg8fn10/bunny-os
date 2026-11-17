@@ -1,0 +1,11 @@
+[Unit]
+Description=Bunny OS native updater post-boot health check (auto-rollback on 3 failures)
+After=bunny-session.service
+Wants=bunny-session.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bunny-update-native --health
+
+[Install]
+WantedBy=multi-user.target

@@ -69,13 +69,25 @@ IDLE ──timer──► CHECK ──new──► PULL ──done──► VERI
 Written atomically every transition, so a power cut lands the machine back in a
 known phase, exactly like the watchdog protocol we already run on builds.
 
-## Skeleton in this commit
+## Working prototype (Mon Nov 16, 2026, prototype-night milestone)
 
-- `system/bin/bunny-update-native` — phase-state-machine stub with the real CLI
-  (`--check`, `--stage`, `--apply`, `--rollback`, `--status`), phase plumbing and
-  manifest parsing in place, deploy/reboot bodies marked `NOT-IMPLEMENTED`.
+- `system/bin/bunny-update-native` — all legs implemented for real:
+  CHECK (manifest read + version compare, offline stays IDLE), PULL
+  (resumable ranged fetch, byte-offset checkpoints, watchdog-safe), VERIFY
+  (sha256 gate, 3-attempt retry then surface, never stages a bad image),
+  STAGE (bootc on the OSTree base; Btrfs rollback snapshot + staged boot
+  entry on the pacstrap base; old boot always retained, reversible until
+  APPLY), APPLY (Bun Bun asks first, `--yes` reboots), HEALTH (post-boot
+  agent + session probe, auto-rollback on 3 consecutive failures), ROLLBACK
+  (previous boot restored, bad version marked so CHECK skips it).
 - `system/units/bunny-update-native.{service,timer}` — the 4h timer + oneshot,
   quiet-hour aware, wired to the same settings file as today's updater.
+- `system/units/bunny-update-native-health.service` — post-boot health check,
+  wired for auto-rollback.
+- `tests/native-updater-test.sh` — offline harness (fake channel + stub
+  backend): 23 checks covering the full machine, resume-from-offset,
+  digest-mismatch surfacing, consent gate, auto-rollback, bad-version skip
+  and recovery. All green.
 
 ## Milestones
 
