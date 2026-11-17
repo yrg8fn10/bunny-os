@@ -42,6 +42,7 @@ from .hints import HintLibrary
 from .library import LibraryManager
 from .mam import GameState, Kind, MAMEngine, PolicyEngine
 from .memory import Memory
+from .curiosity import Curiosity
 from .perception import GameWatcher
 from .persona import Persona
 from .emotion import MoodEngine
@@ -69,6 +70,7 @@ class AgentService:
 
         self.bus = EventBus()
         self.memory = Memory(config.db_path, enabled=config.memory_enabled)
+        self.curiosity = Curiosity(self.memory, config)
         self.persona = Persona.load(max_chars=config.max_utterance_chars)
         self.hints = HintLibrary.from_directory(PACKAGE_DATA / "hints")
         self.input_client = InputClient()
@@ -159,15 +161,21 @@ class AgentService:
                 payload.setdefault("allowlisted", False)
                 self.mic.set_session_active(True)
                 self.engine.observe(payload)
+                self.curiosity.session_start(str(payload.get("game_id") or "unknown"))
             elif event.topic == "game.exited":
                 self.mic.set_session_active(False)
                 self.engine.observe({})
+                self.curiosity.session_end()
 
     def _tick_loop(self) -> None:
         while not self._stop.wait(self.config.tick_seconds):
             try:
                 if self.engine.state.game_id:
                     self.engine.tick()
+                    question = self.curiosity.maybe_ask()
+                    if question:
+                        self.engine.say(question)
+                        self.bus.publish("curiosity.asked", {"question": question})
             except Exception:
                 LOG.exception("tick failed")
 
@@ -198,6 +206,10 @@ class AgentService:
                 if not outcomes:
                     outcomes = [o for o in self.engine.chat(text)]
                 self._remember_spoke(text, outcomes)
+                if self.curiosity.pending:
+                    ack = self.curiosity.absorb(text)
+                    if ack and not any(getattr(o, "executed", False) for o in outcomes):
+                        self.engine.say(ack)
             except Exception:
                 LOG.exception("listen loop hiccup; resuming")
                 self._stop.wait(3.0)

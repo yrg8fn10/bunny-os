@@ -1,0 +1,108 @@
+{
+  "questions": [
+    {
+      "id": "fav_block",
+      "text": "hey, quick question while we're here: what's your favorite block to build with?",
+      "tags": [
+        "taste",
+        "building"
+      ]
+    },
+    {
+      "id": "tame_any",
+      "text": "if you could tame any creature from any game, which one would you pick?",
+      "tags": [
+        "taste",
+        "games"
+      ]
+    },
+    {
+      "id": "snack",
+      "text": "what snack lives next to your controller? i'm building a snack profile, very official.",
+      "tags": [
+        "taste"
+      ]
+    },
+    {
+      "id": "weather",
+      "text": "favorite weather in a game? i'm partial to rain myself, it's very cozy.",
+      "tags": [
+        "taste"
+      ]
+    },
+    {
+      "id": "first_finished",
+      "text": "what was the first game you ever finished? i want to know young-you's story.",
+      "tags": [
+        "history",
+        "games"
+      ]
+    },
+    {
+      "id": "explore_build",
+      "text": "quick taste check: do you like exploring more, or building more?",
+      "tags": [
+        "taste"
+      ]
+    },
+    {
+      "id": "hum_song",
+      "text": "is there a song you'd want me to hum someday? i have a tiny repertoire and room for one more.",
+      "tags": [
+        "music"
+      ]
+    },
+    {
+      "id": "theme_session",
+      "text": "if our next game session had a theme, what would it be?",
+      "tags": [
+        "taste",
+        "games"
+      ]
+    },
+    {
+      "id": "reminder_wish",
+      "text": "what's one thing you wish i could remind you about? i'd like to be useful in the right places.",
+      "tags": [
+        "help"
+      ]
+    },
+    {
+      "id": "friendly_mob",
+      "text": "favorite mob, friendly edition only?",
+      "tags": [
+        "taste",
+        "games"
+      ]
+    },
+    {
+      "id": "world_size",
+      "text": "big open worlds or small cozy ones? no wrong answer, both are valid lifestyles.",
+      "tags": [
+        "taste"
+      ]
+    },
+    {
+      "id": "cozy_spot",
+      "text": "what's the coziest spot you've ever found in a game world?",
+      "tags": [
+        "taste",
+        "games"
+      ]
+    },
+    {
+      "id": "color",
+      "text": "what's your favorite color? i ask for important cosmetic reasons.",
+      "tags": [
+        "taste"
+      ]
+    },
+    {
+      "id": "superpower",
+      "text": "if you had a superpower for one day, which one would you pick?",
+      "tags": [
+        "fun"
+      ]
+    }
+  ]
+}

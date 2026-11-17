@@ -44,6 +44,9 @@ class AgentConfig:
     mic_poll_seconds: float = 1.5   # cadence of the listening loop
     whisper_model: Path | None = None  # local whisper.cpp model; never bundled
     mic_device: str = ""            # PipeWire target; empty = default source
+    curiosity_enabled: bool = True  # the get-to-know-you layer (Ava, Nov 17 2026); asks are rare and local-only
+    curiosity_minutes_into_session: float = 12.0  # warm-up before her first question in a session
+    curiosity_max_per_week: int = 5  # hard cap on questions per rolling week
     piper_model: Path | None = None
     voice_bank: Path | None = None  # pre-rendered v2 voice bank; auto-found when None
     tick_seconds: float = 4.0
@@ -128,6 +131,11 @@ def load_config(settings_file: Path | None = None,
         whisper_model=(_optional_path(pick("whisper_model", None))),
         mic_device=str(pick("mic_device", cfg.mic_device)),
         max_utterance_chars=int(pick("max_utterance_chars", cfg.max_utterance_chars)),
+        curiosity_enabled=_coerce_bool(pick("curiosity_enabled", cfg.curiosity_enabled),
+                                       cfg.curiosity_enabled),
+        curiosity_minutes_into_session=float(pick(
+            "curiosity_minutes_into_session", cfg.curiosity_minutes_into_session)),
+        curiosity_max_per_week=int(pick("curiosity_max_per_week", cfg.curiosity_max_per_week)),
     )
 
     env = os.environ
