@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bunny OS desktop theme
+Comment=Apply the Bunny OS wallpaper and pastel accent in Desktop Mode
+Exec=/usr/bin/bunny-desktop-theme
+TryExec=/usr/bin/bunny-desktop-theme
+Terminal=false
+NoDisplay=true
+X-KDE-autostart-phase=0

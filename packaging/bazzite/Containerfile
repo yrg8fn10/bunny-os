@@ -115,6 +115,16 @@ RUN set -eux; \
     readlink /usr/share/plymouth/themes/default.plymouth | grep -q bunbun; \
     test -f /usr/share/plymouth/themes/bunbun/bunbun-logo.png
 
+# Desktop Mode on image systems: Bazzite's own session launches Plasma
+# directly (bunny-session is the ISO's session wrapper), so the theme helper
+# rides XDG autostart, which Plasma runs in every session, Wayland or X11.
+# Best effort, never blocking; on ISO systems bunny-session applies it first
+# and this second run is a no-op.
+COPY bunny-desktop-theme.desktop /etc/xdg/autostart/bunny-desktop-theme.desktop
+RUN set -eux; \
+    test -x /usr/bin/bunny-desktop-theme; \
+    test -f /etc/xdg/autostart/bunny-desktop-theme.desktop
+
 COPY bunny-image-update /usr/bin/bunny-image-update
 COPY bunny-image-update.service /etc/systemd/system/bunny-image-update.service
 COPY bunny-image-update.timer /etc/systemd/system/bunny-image-update.timer
