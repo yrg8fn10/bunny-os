@@ -24,12 +24,34 @@ has to the game underneath:
 `tools/bunhud/bunhud.py` is the presence daemon:
 
 * connects to the Wayland display, binds `zwlr_layer_shell_v1` (v1..4);
-* draws a sprite (PNG with alpha) in a chosen screen corner, overlay
-  layer, premultiplied-ARGB shared-memory buffer;
+* draws her in a chosen screen corner, overlay layer,
+  premultiplied-ARGB shared-memory buffer;
+* animates her: cycles the idle frame strip in `assets/idle/`
+  (generated from Ava's real artwork by `scripts/gen_bunhud_frames.py`,
+  which keys the studio background out so she floats on anything);
+* perked-ear listening face: `assets/bunhud-listening.png` shows for
+  six seconds after a `player.spoke` event;
+* native speech bubbles: `bunbun.spoken` events draw her words above
+  her head on the same compositor surface, so no web page carries her
+  voice anywhere;
 * control socket at `$XDG_RUNTIME_DIR/bunhud.sock`: `show`, `hide`,
-  `ping`, `quit`;
-* exits cleanly with a message when there is no layer-shell
-  compositor (desktop mode), instead of crashing anything.
+  `listen`, `say <text>`, `ping`, `quit`;
+* desktop presence: without `--event-only` she is simply there on a
+  desktop compositor (KWin), part of the OS, and in Game Mode her
+  presence follows the MAM bus as before.
+
+## Native, not a web page (pre15)
+
+Through pre14 her desktop face was a browser-kiosk web app, which is
+why she fought the desktop and the Gaming Mode overlay. Since pre15 the
+browser draws nothing of her: bunhud is her only face, in both
+sessions. The control panel's companion overlay is a stub now
+(`control-panel/ui/js/companion.js`); her web UI lives only where a
+user deliberately opens it.
+
+Bun Bun is drawn as a compositor-level overlay, never a game
+injection, so anti-cheat never sees her. She is a notification that
+hops.
 
 Files:
 

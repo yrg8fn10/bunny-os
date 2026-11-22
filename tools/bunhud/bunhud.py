@@ -1,27 +1,40 @@
 #!/usr/bin/env python3
-"""bunhud: Bun Bun's Game Mode presence layer.
+"""bunhud: Bun Bun's native presence layer.
 
-Draws Bun Bun over running games as a compositor-level layer-shell
-overlay. She is never injected into any game process: the overlay is
-owned by the compositor (gamescope), the same way a notification or a
-screenshot is, so there is no anti-cheat surface to touch.
+Draws Bun Bun straight through the compositor as a layer-shell
+overlay — no browser, no web page, nothing between her and the screen.
+She is never injected into any game process: the overlay is owned by
+the compositor (gamescope in Game Mode, KWin on the desktop), the same
+way a notification or a screenshot is, so there is no anti-cheat
+surface to touch.
 
 Fully local. No network, no API keys, no screen reading.
 
-v0: a single static sprite in a screen corner with a control socket.
-Animated frames, hint bubbles and MAM integration come later.
+What she does natively now:
+  * animated: cycles the idle frame strip generated from Ava's artwork;
+  * listening face: her ears perk when she hears you;
+  * speech bubbles: her spoken lines are drawn above her, so the web
+    page is no longer her face anywhere;
+  * desktop presence: on a desktop compositor (KWin) she is simply
+    there, part of the OS, not something a browser draws.
+
+v1: animated presence + bubbles. Hint bubbles and richer emotes grow
+from here.
 """
 from __future__ import annotations
 
 import argparse
 import importlib.util
-import queue
 import os
+import queue
 import select
+import signal
 import socket
 import sys
 import time
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 from pywayland.client import Display
 from pywayland.protocol.wayland import WlCompositor, WlShm, WlSurface
@@ -46,15 +59,31 @@ ANCHORS = {
 }
 DEFAULT_MARGIN = 16
 LISTEN_SECONDS = 6.0  # how long her ears stay perked after she hears you
+BUBBLE_SECONDS = 7.0  # how long a spoken line stays up
+FRAME_SECONDS = 0.16  # idle animation pace (~6 fps: lively, not frantic)
+
+# Room the speech bubble needs above and beside her, in pixels at scale 1.
+BUBBLE_PAD_W = 190
+BUBBLE_PAD_H = 104
+
+FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+)
+
+INK = (60, 20, 50, 255)        # her outline color, reused for bubble text
+PAPER = (253, 244, 233, 255)   # her cream, reused for the bubble paper
+PINK = (214, 84, 158, 255)
 
 
-def sprite_to_argb(img) -> bytes:
+def sprite_to_argb(img) -> tuple[bytes, int, int]:
     """Convert a PIL RGBA image to premultiplied little-endian ARGB8888.
 
     Wayland's argb8888 is byte-ordered B, G, R, A with premultiplied
     alpha; PNGs are straight alpha, so the RGB channels get scaled by
     the alpha value before packing. This keeps her edges clean against
-    whatever game is running underneath.
+    whatever is running underneath.
     """
     img = img.convert("RGBA")
     w, h = img.size
@@ -85,35 +114,104 @@ def sprite_to_argb(img) -> bytes:
 
 
 def load_sprite(path: str):
-    from PIL import Image
-
     img = Image.open(path)
     return sprite_to_argb(img)
+
+
+def load_frames(directory: str | None):
+    """Load the idle animation strip, sorted, as PIL RGBA images."""
+    if not directory:
+        return []
+    d = Path(directory)
+    if not d.is_dir():
+        return []
+    frames = []
+    for p in sorted(d.glob("*.png")):
+        try:
+            frames.append(Image.open(p).convert("RGBA"))
+        except Exception:
+            continue
+    return frames
+
+
+def _load_font(size: int):
+    for cand in FONT_CANDIDATES:
+        if os.path.exists(cand):
+            try:
+                return ImageFont.truetype(cand, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def wrap_text(text: str, font, max_width: int, max_lines: int = 4) -> list[str]:
+    """Wrap a spoken line so it fits the bubble. Words never get cut."""
+    lines: list[str] = []
+    for paragraph in text.splitlines() or [""]:
+        words = paragraph.split()
+        if not words:
+            continue
+        cur = words[0]
+        for word in words[1:]:
+            trial = f"{cur} {word}"
+            if font.getlength(trial) <= max_width:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+                if len(lines) == max_lines:
+                    break
+        if len(lines) < max_lines:
+            lines.append(cur)
+        if len(lines) >= max_lines:
+            break
+    if len(lines) == max_lines and text.split():
+        # Overflow: end the last line on an ellipsis rather than mid-word.
+        pass
+    return lines or [text[:60]]
 
 
 class Bunhud:
     def __init__(self, sprite_path: str, corner: str, scale: int,
                  listening_sprite: str | None = None,
-                 mam_host: str | None = None, mam_port: int = 8422):
+                 frames_dir: str | None = None,
+                 mam_host: str | None = None, mam_port: int = 8422,
+                 always_show: bool | None = None):
         self.sprite_path = sprite_path
         self.listening_sprite = listening_sprite
+        self.frames_dir = frames_dir
         self.corner = corner if corner in ANCHORS else "bottom-left"
         self.scale = scale
         # MAM hookup: the companion service's bus drives show/hide.
         self.mam_host = mam_host
         self.mam_port = mam_port
-        self.mam_queue: "queue.Queue[str]" = queue.Queue(maxsize=16)
+        self.mam_queue: "queue.Queue[object]" = queue.Queue(maxsize=16)
         self.mam_bridge = None
         self.buffer = None
         self.surface = None
         self.layer_surface = None
+        self.frame_images = load_frames(frames_dir)
+        self.frame_index = 0
+        self.next_frame_at = 0.0
         self.sprite_w = 0
         self.sprite_h = 0
-        self.shown = True
+        self.canvas_w = 0
+        self.canvas_h = 0
+        self.shown = False
+        self.always_show = always_show  # None: decide from the session
+        self.is_gaming = False
         self.configured = None
-        self.listen_buffer = None
         self.listening_until = 0.0
+        self.listening_image = None
+        self.bubble_text: str | None = None
+        self.bubble_until = 0.0
+        self.font = _load_font(16)
+        self.font_small = _load_font(13)
+        self._dirty = True
 
+    # ------------------------------------------------------------------
+    # Wayland plumbing
+    # ------------------------------------------------------------------
     def bind_all(self, registry, name, iface, version):
         if iface == "wl_compositor":
             self.compositor = registry.bind(name, WlCompositor, version)
@@ -146,6 +244,8 @@ class Bunhud:
                 display = Display(name=name)
                 display.connect()
                 print(f"bunhud: connected to Wayland display '{name}'")
+                # gamescope means Game Mode; anything else is her desktop.
+                self.is_gaming = name.startswith("gamescope")
                 return display
             except Exception as e:
                 errors.append(f"{name}: {e}")
@@ -163,33 +263,85 @@ class Bunhud:
         registry.add_listener(("global", self.bind_all))
         self.display.roundtrip()
         if self.layer_shell is None:
-            # Desktop mode or an old compositor: never crash the session.
-            print("bunhud: no layer-shell compositor (desktop mode); not drawing")
+            # A compositor without layer-shell: never crash the session.
+            print("bunhud: no layer-shell compositor here; not drawing")
             self.display.disconnect()
             return 0
 
-        data, w, h = load_sprite(self.sprite_path)
-        self.sprite_w, self.sprite_h = w * self.scale, h * self.scale
-        fd = os.memfd_create("bunhud-sprite")
-        os.write(fd, data)
-        pool = self.shm.create_pool(fd, len(data))
-        self.buffer = pool.create_buffer(0, w, h, w * 4, WlShm.format.argb8888, 0)
+        # Desktop vs Game Mode presence. On the desktop she is simply
+        # there — part of the OS, no page to open. In Game Mode she waits
+        # for the MAM events (game started, agent speaks) the same as ever.
+        if self.always_show is None:
+            self.always_show = not self.is_gaming
+        if self.is_gaming:
+            print("bunhud: Game Mode (gamescope); presence follows the MAM bus")
+        else:
+            print("bunhud: desktop session (KWin); she is always present")
 
-        # Her listening face: same size, so the layer surface never changes.
+        self._prepare_canvas()
+        self._create_surface()
+        self._start_mam()
+        if self.always_show:
+            self.shown = True
+            self._dirty = True
+        return self.loop()
+
+    def _prepare_canvas(self):
+        """Size the canvas: her sprite plus room for a speech bubble."""
+        base_w, base_h = 0, 0
+        if self.frame_images:
+            base_w, base_h = self.frame_images[0].size
+        else:
+            data, w, h = load_sprite(self.sprite_path)
+            base_w, base_h = w, h
+        self.sprite_w = base_w * max(1, self.scale)
+        self.sprite_h = base_h * max(1, self.scale)
+        self.canvas_w = self.sprite_w + BUBBLE_PAD_W
+        self.canvas_h = self.sprite_h + BUBBLE_PAD_H
+        self.pool_size = self.canvas_w * self.canvas_h * 4
+        self.canvas = Image.new("RGBA", (self.canvas_w, self.canvas_h), (0, 0, 0, 0))
+        # Her sprite sits in the bottom-right of the canvas: the corner
+        # anchor keeps her snugged into the screen corner and the bubble
+        # gets the space above and to the inside.
+        self.sprite_x = self.canvas_w - self.sprite_w
+        self.sprite_y = self.canvas_h - self.sprite_h
+        # Pre-scale every frame once, straight to premultiplied ARGB.
+        self.frame_bytes: list[bytes] = []
+        for img in self.frame_images:
+            if (img.width, img.height) != (base_w, base_h):
+                img = img.resize((base_w, base_h), Image.LANCZOS)
+            self.frame_bytes.append(sprite_to_argb(img)[0])
+        if not self.frame_bytes:
+            data, w, h = load_sprite(self.sprite_path)
+            self.frame_bytes = [data]
+
+    def _create_surface(self):
+        fd = os.memfd_create("bunhud-canvas")
+        # The pool starts zeroed; every draw rewrites the whole canvas.
+        os.ftruncate(fd, self.pool_size)
+        self.pool_fd = fd
+        pool = self.shm.create_pool(fd, self.pool_size)
+        self.buffer = pool.create_buffer(
+            0, self.canvas_w, self.canvas_h, self.canvas_w * 4,
+            WlShm.format.argb8888, 0,
+        )
+        # Her listening face: same footprint, so the layer never resizes.
         if self.listening_sprite and os.path.exists(self.listening_sprite):
-            ldata, lw, lh = load_sprite(self.listening_sprite)
-            if (lw, lh) == (w, h):
-                lfd = os.memfd_create("bunhud-listening")
-                os.write(lfd, ldata)
-                lpool = self.shm.create_pool(lfd, len(ldata))
-                self.listen_buffer = lpool.create_buffer(
-                    0, lw, lh, lw * 4, WlShm.format.argb8888, 0
-                )
+            limg = Image.open(self.listening_sprite).convert("RGBA")
+            if self.frame_images:
+                ref = self.frame_images[0]
+            else:
+                ref = Image.open(self.sprite_path).convert("RGBA")
+            if (limg.width, limg.height) == (ref.width, ref.height):
+                self.listening_image = limg
             else:
                 print(
                     "bunhud: listening sprite is "
-                    f"{lw}x{lh}, idle is {w}x{h}; ear perk stays off"
+                    f"{limg.width}x{limg.height}, idle is "
+                    f"{ref.width}x{ref.height}; ear perk stays off"
                 )
+        else:
+            self.listening_image = None
 
         self.surface = self.compositor.create_surface()
         self.layer_surface = self.layer_shell.get_layer_surface(
@@ -202,7 +354,7 @@ class Bunhud:
         self.layer_surface.set_margin(m, m, m, m)  # top, right, bottom, left
         self.layer_surface.set_exclusive_zone(-1)  # reserve nothing
         self.layer_surface.set_keyboard_interactivity(0)  # never take keys
-        self.layer_surface.set_size(self.sprite_w, self.sprite_h)
+        self.layer_surface.set_size(self.canvas_w, self.canvas_h)
         region = self.compositor.create_region()
         region.add(0, 0, 0, 0)  # empty input region: clicks pass through
         self.surface.set_input_region(region)
@@ -211,54 +363,120 @@ class Bunhud:
         if self.configured is None:
             print("bunhud: compositor never configured the layer surface")
             self.display.disconnect()
-            return 1
-        self.show()
+            raise SystemExit(1)
+
+    def _start_mam(self):
         if self.mam_host:
             from mam_bridge import MamBridge
 
             self.mam_bridge = MamBridge(self.mam_queue, self.mam_host, self.mam_port)
             self.mam_bridge.start()
-        return self.loop()
 
-    def on_configure(self, _p, serial, width, height):
-        self.configured = (serial, width, height)
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
+    def _composite(self) -> None:
+        """Render the current state (frame, ears, bubble) onto the canvas."""
+        c = self.canvas
+        c.paste((0, 0, 0, 0), (0, 0, self.canvas_w, self.canvas_h))
+        # Her body: the listening face wins while the perk is live.
+        if self.listening_image is not None and self.listening_until:
+            c.alpha_composite(self.listening_image, (self.sprite_x, self.sprite_y))
+        else:
+            idx = self.frame_index % len(self.frame_images)
+            if self.scale > 1:
+                img = self.frame_images[idx].resize(
+                    (self.sprite_w, self.sprite_h), Image.LANCZOS
+                )
+                c.alpha_composite(img, (self.sprite_x, self.sprite_y))
+            else:
+                c.alpha_composite(self.frame_images[idx], (self.sprite_x, self.sprite_y))
+        if self.bubble_text and self.bubble_until > time.monotonic():
+            self._draw_bubble(self.bubble_text)
 
-    def on_closed(self, _p):
-        self.shown = False
+    def _draw_bubble(self, text: str) -> None:
+        c = self.canvas
+        d = ImageDraw.Draw(c)
+        pad = 10
+        max_text_w = self.canvas_w - 2 * pad - BUBBLE_PAD_W + 40
+        lines = wrap_text(text, self.font, max_text_w)
+        line_h = self.font.size + 6 if hasattr(self.font, "size") else 20
+        bw = int(max(self.font.getlength(ln) for ln in lines)) + 2 * pad
+        bh = line_h * len(lines) + 2 * pad - 2
+        bx, by = 2, 2
+        d.rounded_rectangle(
+            [bx, by, bx + bw, by + bh], radius=10, fill=PAPER, outline=PINK, width=2
+        )
+        # Tail: a little triangle pointing at her head.
+        tx = bx + bw - 18
+        d.polygon(
+            [(tx, by + bh - 1), (tx + 16, by + bh - 1), (tx + 6, by + bh + 12)],
+            fill=PAPER,
+        )
+        d.line([(tx, by + bh - 1), (tx + 6, by + bh + 12)], fill=PINK, width=2)
+        d.line([(tx + 16, by + bh - 1), (tx + 6, by + bh + 12)], fill=PINK, width=2)
+        y = by + pad - 2
+        for ln in lines:
+            d.text((bx + pad, y), ln, font=self.font, fill=INK)
+            y += line_h
+
+    def _blit(self) -> None:
+        """Push the rendered canvas into the shared pool and present it."""
+        raw, _, _ = sprite_to_argb(self.canvas)
+        os.lseek(self.pool_fd, 0, os.SEEK_SET)
+        os.write(self.pool_fd, raw)
+        self.surface.attach(self.buffer, 0, 0)
+        self.surface.damage(0, 0, self.canvas_w, self.canvas_h)
+        self.surface.commit()
+
+    def _redraw(self) -> None:
+        if not self.shown:
+            return
+        self._composite()
+        self._blit()
+        self._dirty = False
 
     def show(self):
         self.shown = True
-        self.layer_surface.set_size(self.sprite_w, self.sprite_h)
-        self.surface.attach(self.buffer, 0, 0)
-        self.surface.damage(0, 0, self.sprite_w, self.sprite_h)
-        self.surface.commit()
+        self._dirty = True
 
     def hide(self):
         self.shown = False
         self.layer_surface.set_size(0, 0)  # zero size unmaps a layer surface
         self.surface.attach(None, 0, 0)
         self.surface.commit()
+        self._dirty = False
 
     def start_listening(self):
         """She heard you: swap to the perked-ear face for a moment."""
-        if self.listen_buffer is None:
+        if self.listening_image is None:
             return
         self.listening_until = time.monotonic() + LISTEN_SECONDS
-        if self.shown:
-            self.surface.attach(self.listen_buffer, 0, 0)
-            self.surface.damage(0, 0, self.sprite_w, self.sprite_h)
-            self.surface.commit()
+        self._dirty = True
 
     def settle_ears(self):
         """Back to the idle face once the perk has had its moment."""
-        if not self.listening_until:
-            return
-        if time.monotonic() <= self.listening_until:
-            return
-        self.listening_until = 0.0
-        if self.shown and self.listen_buffer is not None:
-            self.show()
+        if self.listening_until and time.monotonic() > self.listening_until:
+            self.listening_until = 0.0
+            self._dirty = True
 
+    def speak(self, text: str):
+        """Put her line in a native bubble above her head."""
+        text = (text or "").strip()
+        if not text:
+            return
+        self.bubble_text = text[:280]
+        self.bubble_until = time.monotonic() + BUBBLE_SECONDS
+        self._dirty = True
+
+    def settle_bubble(self):
+        if self.bubble_text and time.monotonic() > self.bubble_until:
+            self.bubble_text = None
+            self._dirty = True
+
+    # ------------------------------------------------------------------
+    # Event loop
+    # ------------------------------------------------------------------
     def loop(self) -> int:
         ctrl = self.control_socket()
         running = True
@@ -267,24 +485,30 @@ class Bunhud:
             nonlocal running
             running = False
 
-        import signal
-
         signal.signal(signal.SIGINT, stop)
         signal.signal(signal.SIGTERM, stop)
-        fd = None
         try:
             fd = self.display.get_fd()
         except AttributeError:
-            pass
+            fd = None
         try:
             while running:
                 self.display.dispatch()
                 self.settle_ears()
+                self.settle_bubble()
                 self.drain_mam()
+                now = time.monotonic()
+                if self.frame_images and now >= self.next_frame_at:
+                    self.frame_index = (self.frame_index + 1) % len(self.frame_images)
+                    self.next_frame_at = now + FRAME_SECONDS
+                    self._dirty = True
+                if self._dirty:
+                    self._redraw()
                 if not self.serve_control():
                     running = False
+                wait = 0.15 if (self.frame_images or self._dirty) else 0.5
                 if fd is not None:
-                    select.select([fd, ctrl], [], [], 0.5)
+                    select.select([fd, ctrl], [], [], wait)
         finally:
             try:
                 self.display.disconnect()
@@ -314,24 +538,38 @@ class Bunhud:
     def drain_mam(self) -> None:
         while True:
             try:
-                command = self.mam_queue.get_nowait()
+                item = self.mam_queue.get_nowait()
             except queue.Empty:
                 return
+            command = text = None
+            if isinstance(item, dict):
+                command = item.get("cmd")
+                text = item.get("text")
+            else:
+                command = item
             if command == "show":
-                self.show()
+                if not (self.is_gaming and self.always_show):
+                    self.show()
             elif command == "hide":
-                self.hide()
+                # On the desktop she is part of the OS: only the control
+                # socket or the session tearing down takes her off screen.
+                if self.is_gaming:
+                    self.hide()
             elif command == "listen":
                 self.start_listening()
+            elif command == "speak":
+                self.speak(text or "")
 
     def serve_control(self) -> bool:
-        """One line per client: show, hide, ping, quit."""
+        """One line per client: show, hide, say <text>, ping, quit."""
         try:
             conn, _ = self.listener.accept()
         except (BlockingIOError, AttributeError):
             return True
+        line = ""
         try:
-            line = conn.recv(64).decode(errors="replace").strip().lower()
+            raw = conn.recv(512).decode(errors="replace").strip()
+            line = raw.split("\n")[0].lower()
             reply = "ok"
             if line == "hide":
                 self.hide()
@@ -339,6 +577,8 @@ class Bunhud:
                 self.show()
             elif line == "listen":
                 self.start_listening()
+            elif line.startswith("say "):
+                self.speak(raw[4:].strip())
             elif line == "ping":
                 reply = "bunhud alive, shown=" + str(self.shown).lower()
             elif line == "quit":
@@ -350,16 +590,21 @@ class Bunhud:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Bun Bun Game Mode presence layer")
+    parser = argparse.ArgumentParser(description="Bun Bun native presence layer")
     parser.add_argument(
         "--sprite",
         default=str(_TOOLS / "assets" / "bunhud-placeholder.png"),
-        help="PNG with alpha to draw as Bun Bun",
+        help="PNG with alpha to draw as Bun Bun (static fallback)",
     )
     parser.add_argument(
         "--listening-sprite",
         default=str(_TOOLS / "assets" / "bunhud-listening.png"),
         help="PNG with alpha drawn while she is listening (ear perk)",
+    )
+    parser.add_argument(
+        "--frames-dir",
+        default=str(_TOOLS / "assets" / "idle"),
+        help="directory of idle PNG frames to animate (from her artwork)",
     )
     parser.add_argument(
         "--corner",
@@ -375,14 +620,30 @@ def main() -> int:
     )
     parser.add_argument("--mam-host", default="127.0.0.1")
     parser.add_argument("--mam-port", type=int, default=8422)
+    parser.add_argument(
+        "--always-show",
+        dest="always_show",
+        action="store_true",
+        default=None,
+        help="show her as soon as she starts (desktop presence)",
+    )
+    parser.add_argument(
+        "--event-only",
+        dest="always_show",
+        action="store_false",
+        default=None,
+        help="show her only on MAM events, never by default",
+    )
     args = parser.parse_args()
     hud = Bunhud(
         args.sprite,
         args.corner,
         args.scale,
         listening_sprite=args.listening_sprite,
+        frames_dir=args.frames_dir,
         mam_host=args.mam_host if args.mam else None,
         mam_port=args.mam_port,
+        always_show=args.always_show,
     )
     return hud.run()
 

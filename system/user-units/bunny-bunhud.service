@@ -1,17 +1,18 @@
 [Unit]
-Description=Bun Bun — Game Mode presence layer (bunhud)
+Description=Bun Bun — native presence layer (bunhud)
 Documentation=file:///opt/bunbun/docs/GAMEMODE-PRESENCE.md
 PartOf=graphical-session.target
 After=graphical-session.target bunny-bunbun.service
-# bunhud draws Bun Bun as a compositor-level layer-shell overlay. It
-# exits cleanly (status 0) whenever no layer-shell compositor is up,
-# so desktop sessions simply skip it instead of restart-looping.
+# bunhud draws Bun Bun as a compositor-level layer-shell overlay:
+# part of the OS on the desktop (KWin) and over games in Game Mode
+# (gamescope) — never a browser page. It exits cleanly (status 0)
+# whenever no layer-shell compositor is up, instead of restart-looping.
 # Requires python3-pywayland and Pillow importable by the system
 # python on the image; see docs/GAMEMODE-PRESENCE.md packaging notes.
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/bunbun/tools/bunhud/bunhud.py --mam --sprite /opt/bunbun/tools/bunhud/assets/bunhud-placeholder.png
+ExecStart=/usr/bin/python3 /opt/bunbun/tools/bunhud/bunhud.py --mam --sprite /opt/bunbun/tools/bunhud/assets/bunhud-placeholder.png --listening-sprite /opt/bunbun/tools/bunhud/assets/bunhud-listening.png --frames-dir /opt/bunbun/tools/bunhud/assets/idle
 Environment=PYTHONPATH=/opt/bunbun/tools/bunhud/pylibs:/opt/bunbun/tools/bunhud
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure

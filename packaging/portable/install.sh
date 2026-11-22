@@ -355,31 +355,31 @@ EOF
   fi
 fi
 
-# --- 2e. the Game Mode presence layer (bunhud) ----------------------------------
+# --- 2e. the native presence layer (bunhud) -------------------------------------
 BUNHUD_DIR="${LIB}/bunhud"
 if [[ -f "${HERE}/bunhud/bunhud.py" ]]; then
-  step "Installing the Game Mode presence layer (bunhud)"
+  step "Installing the native presence layer (bunhud)"
   run rm -rf "${DESTDIR}${BUNHUD_DIR}"
   run install -d -m 0755 "${DESTDIR}${BUNHUD_DIR}"
   run cp -a "${HERE}/bunhud/." "${DESTDIR}${BUNHUD_DIR}/"
   find "${DESTDIR}${BUNHUD_DIR}" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
   find "${DESTDIR}${BUNHUD_DIR}" -type f -name '*.pyc' -delete 2>/dev/null || true
-  info "bunhud   : ${BUNHUD_DIR} (draws Bun Bun over Game Mode games)"
+  info "bunhud   : ${BUNHUD_DIR} (Bun Bun natively over games and the desktop)"
 else
-  warn "bunhud payload missing; Bun Bun will not appear inside Game Mode games"
+  warn "bunhud payload missing; Bun Bun will not appear in the OS overlay"
 fi
 
 # --- 3d. the bunhud user service ------------------------------------------------
 if [[ -f "${DESTDIR}${BUNHUD_DIR}/bunhud.py" ]]; then
-  step "Installing bunny-bunhud.service (Game Mode presence layer)"
+  step "Installing bunny-bunhud.service (native presence layer)"
   put "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunhud.service" <<EOF
 [Unit]
-Description=Bun Bun Game Mode presence layer (bunhud)
+Description=Bun Bun native presence layer (bunhud)
 Documentation=file://${PREFIX}/share/doc/bunny-os/GAMEMODE-PRESENCE.md
 
 [Service]
 WorkingDirectory=${BUNHUD_DIR}
-ExecStart=/usr/bin/python3 ${BUNHUD_DIR}/bunhud.py --mam --sprite ${BUNHUD_DIR}/assets/bunhud-placeholder.png
+ExecStart=/usr/bin/python3 ${BUNHUD_DIR}/bunhud.py --mam --sprite ${BUNHUD_DIR}/assets/bunhud-placeholder.png --listening-sprite ${BUNHUD_DIR}/assets/bunhud-listening.png --frames-dir ${BUNHUD_DIR}/assets/idle
 Environment=PYTHONPATH=${BUNHUD_DIR}/pylibs:${BUNHUD_DIR}
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure

@@ -3,9 +3,10 @@
 
 Connects to the companion service's local SSE stream
 (127.0.0.1:8422/v1/stream) and turns MAM bus events into bunhud
-commands: the game started, she appears; the agent stopped, she hides;
-you spoke, her ears perk up (the "listen" face) so you can see she heard.
-A future revision will drive hint bubbles from "bunbun.spoken".
+commands: the game started, she appears; you spoke, her ears perk up
+(the "listen" face); she spoke, her line goes into a native bubble
+above her head — no web page needed; the agent stopped, she steps
+aside.
 
 Localhost only. bunhud never talks to the network, with or without
 this bridge.
@@ -19,21 +20,32 @@ import threading
 
 # Provisional mapping, pinned to the topics service.py publishes today.
 # Revisit when the MAM engine grows show/hide-aware topics.
+# (command, payload field to carry through, or None)
 TOPIC_COMMANDS = {
-    "game.started": "show",
-    "agent.started": "show",
-    "bunbun.spoken": "show",
-    "player.spoke": "listen",
-    "agent.stopped": "hide",
+    "game.started": ("show", None),
+    "agent.started": ("show", None),
+    "bunbun.spoken": ("speak", "text"),
+    "player.spoke": ("listen", None),
+    "agent.stopped": ("hide", None),
 }
 
 
-def event_to_command(event) -> str | None:
-    """One bus event -> one bunhud command (or None to ignore)."""
+def event_to_command(event) -> dict | None:
+    """One bus event -> one bunhud command (or None to ignore).
+
+    Commands are dicts {"cmd": ..., "text": ...} since pre15: spoken
+    lines carry her words for the native bubble. bunhud still accepts
+    bare strings from the control socket, so nothing else breaks.
+    """
     if not isinstance(event, dict):
         return None
     topic = event.get("topic") or event.get("event")
-    return TOPIC_COMMANDS.get(topic)
+    mapped = TOPIC_COMMANDS.get(topic)
+    if not mapped:
+        return None
+    command, field = mapped
+    text = event.get("payload", {}).get(field) if field else None
+    return {"cmd": command, "text": text}
 
 
 def parse_sse_line(line: str):
@@ -57,7 +69,7 @@ class MamBridge(threading.Thread):
     the bridge retries with a growing backoff and bunhud keeps drawing.
     """
 
-    def __init__(self, commands: "queue.Queue[str]", host="127.0.0.1", port=8422):
+    def __init__(self, commands: "queue.Queue[dict]", host="127.0.0.1", port=8422):
         super().__init__(daemon=True, name="bunhud-mam")
         self.commands = commands
         self.host = host
