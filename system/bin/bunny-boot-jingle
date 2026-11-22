@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-boot-jingle — Bun Bun's little startup song, played once per boot.
+#
+#  Fired by the bunny-jingle user service at session start. The audio stack
+#  takes a couple of seconds to wake up after boot, so this waits briefly and
+#  plays best effort: a missing player or missing sound must never hold up a
+#  login. A boot-id marker keeps mode switches and second logins from
+#  replaying the song.
+# =============================================================================
+set -uo pipefail
+
+SOUND="/usr/share/bunbun/sounds/boot-jingle.wav"
+if [[ ! -f "${SOUND}" ]]; then
+  here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  [[ -f "${here}/../sounds/boot-jingle.wav" ]] && SOUND="${here}/../sounds/boot-jingle.wav"
+fi
+[[ -f "${SOUND}" ]] || exit 0
+
+boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || date +%s)"
+mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/.bunny-jingle-${boot_id}"
+# Claim the play first so two sessions starting together cannot both play.
+if ! ( set -o noclobber; : > "${mark}" ) 2>/dev/null; then
+  exit 0
+fi
+
+player=""
+for _p in paplay pw-play ffplay aplay; do
+  command -v "${_p}" >/dev/null 2>&1 && { player="${_p}"; break; }
+done
+[[ -n "${player}" ]] || exit 0
+
+for _ in $(seq 1 12); do
+  case "${player}" in
+    ffplay) ffplay -nodisp -autoexit -loglevel quiet "${SOUND}" >/dev/null 2>&1 && exit 0 ;;
+    *)      "${player}" "${SOUND}" >/dev/null 2>&1 && exit 0 ;;
+  esac
+  sleep 1
+done
+exit 0

@@ -53,7 +53,7 @@ safe_rmrf "${STAGE}"
 mkdir -p "${STAGE}/bin" "${STAGE}/ui" "${STAGE}/docs"
 
 # --- binaries ----------------------------------------------------------------
-for tool in bunny-panel bunny-panel-bridge bunny-setupd bunbun-join bunny-desktop-theme; do
+for tool in bunny-panel bunny-panel-bridge bunny-setupd bunbun-join bunny-desktop-theme bunny-boot-jingle; do
   src="${ROOT}/system/bin/${tool}"
   [[ -f "${src}" ]] || die "missing ${src}"
   install -m 0755 "${src}" "${STAGE}/bin/${tool}"
@@ -113,6 +113,11 @@ mkdir -p "${STAGE}/wallpaper"
 cp -a "${ROOT}/assets/wallpaper/bunny-glow.png" "${STAGE}/wallpaper/bunny-glow.png"
 [[ -f "${ROOT}/assets/wallpaper/bunny-desktop.png" ]] && cp -a "${ROOT}/assets/wallpaper/bunny-desktop.png" "${STAGE}/wallpaper/bunny-desktop.png"
 [[ -f "${ROOT}/assets/wallpaper/bunny-game-mode.png" ]] && cp -a "${ROOT}/assets/wallpaper/bunny-game-mode.png" "${STAGE}/wallpaper/bunny-game-mode.png"
+
+# --- the startup jingle ----------------------------------------------------------
+mkdir -p "${STAGE}/sounds"
+[[ -f "${ROOT}/assets/sounds/boot-jingle.wav" ]] || die "missing ${ROOT}/assets/sounds/boot-jingle.wav"
+cp -a "${ROOT}/assets/sounds/boot-jingle.wav" "${STAGE}/sounds/boot-jingle.wav"
 
 # --- the neural voice (Piper, bundled so Bun Bun sounds human out of the box) ---
 #  Pinned upstream URLs + sha256: the model ships as bunny-default.onnx, the key

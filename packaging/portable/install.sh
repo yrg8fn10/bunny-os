@@ -401,6 +401,38 @@ EOF
   fi
 fi
 
+# --- 3e. the boot jingle ---------------------------------------------------------
+if [[ -f "${HERE}/sounds/boot-jingle.wav" ]]; then
+  step "Installing the startup jingle"
+  run install -d -m 0755 "${DESTDIR}/usr/share/bunbun/sounds"
+  run install -m 0644 "${HERE}/sounds/boot-jingle.wav" "${DESTDIR}/usr/share/bunbun/sounds/boot-jingle.wav"
+  put "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-jingle.service" <<EOF
+[Unit]
+Description=Bun Bun's startup jingle (plays once per boot)
+
+[Service]
+Type=oneshot
+ExecStart=${BIN}/bunny-boot-jingle
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=default.target
+EOF
+  chmod 0644 "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-jingle.service" 2>/dev/null || true
+  if [[ -n "${DESTDIR}" ]]; then
+    info "[destdir] jingle unit installed, systemctl not run"
+  elif [[ -n "${BUNNY_INSTALL_IMAGE:-}" ]]; then
+    run install -d -m 0755 "/etc/systemd/user/default.target.wants"
+    run ln -sfn "${PREFIX}/lib/systemd/user/bunny-jingle.service" "/etc/systemd/user/default.target.wants/bunny-jingle.service"
+    info "jingle   : enabled for every future login"
+  else
+    run systemctl --global enable bunny-jingle.service || warn "could not enable bunny-jingle.service globally"
+  fi
+  info "jingle   : /usr/share/bunbun/sounds/boot-jingle.wav (once per boot, right as she appears)"
+else
+  warn "startup jingle missing from the payload; the boot stays silent"
+fi
+
 # --- 4. menu entries ---------------------------------------------------------
 step "Installing menu entries"
 put "${DESTDIR}${APPS}/bunny-os.desktop" <<EOF
