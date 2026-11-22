@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  bunny-upgrade — the plain-English name for bunny-update-payload.
+#
+#  Same tool, same flags. It is named "upgrade" because that is what it does:
+#  it pulls the published payload and swaps the files in place, saved data and
+#  mods untouched. bunny-update (no -payload) is a different tool: it checks
+#  the image channel for a whole new OS image.
+# =============================================================================
+exec "$(dirname "$(readlink -f "$0")")/bunny-update-payload" "$@"
