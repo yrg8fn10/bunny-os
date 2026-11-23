@@ -9,6 +9,11 @@
  *
  * This stub keeps the shell's calls harmless, so the panel keeps its
  * own chrome while bunhud owns her face. No DOM subtree, no timer.
+ *
+ * Privacy note: what Bun Bun sees is screen state passed in by the
+ * watcher (the active app and which screen she is on). No camera, no
+ * webcam, no microphone peek — screen-state tracking only, and it all
+ * stays on the device.
  */
 export function createCompanion() {
   return {
