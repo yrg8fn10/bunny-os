@@ -3,7 +3,7 @@
   "author": "OSAGON Research",
   "target": "SP",
   "manifest_version": 8,
-  "version": "v1.2",
+  "version": "v1.3",
   "description": "Bun Bun's kawaii Game Mode makeover: the bunny night valley, warm pastel pink instead of Steam blue, soft rounded shapes, a pink glow on whatever you focus, and a welcome that feels like a friend. Cute and comforting for first-time Deck owners.",
   "inject": {
     "shared.css": [

@@ -126,3 +126,45 @@ body {
   background: rgba(36, 22, 51, 0.35) !important;
   border-radius: 16px !important;
 }
+
+/* ============================================================
+   v1.3 - her charm on the loading screens (Nov 23 2026)
+   Bun Bun's ears peek up from the bottom while a game loads,
+   and a paw print orbits as the spinner. Pure CSS + two small
+   committed assets, no client-update risk.
+   ============================================================ */
+
+[class*="LoadingScreen_"]::before,
+[class*="appprogress_SplashScreenLoading"]::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 280px;
+  height: 165px;
+  transform: translateX(-50%);
+  background: url("/themes_custom/bunny-cute/ears.png") bottom center / contain no-repeat;
+  pointer-events: none;
+  z-index: 1;
+}
+
+[class*="LoadingScreen_"]::after,
+[class*="appprogress_SplashScreenLoading"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  width: 170px;
+  height: 170px;
+  margin: -85px 0 0 -85px;
+  background: url("/themes_custom/bunny-cute/paw.png") center 6px / 60px no-repeat;
+  transform-origin: 50% 50%;
+  animation: bunny-orbit 1.1s linear infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes bunny-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
