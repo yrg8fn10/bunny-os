@@ -59,4 +59,26 @@ if command -v kwriteconfig6 >/dev/null 2>&1; then
   fi
 fi
 
+# Cursor theme: point Plasma (X11 and Wayland) and GTK apps at the Bunny set.
+if [[ -d /usr/share/icons/BunnyCursor/cursors ]]; then
+  for kw in kwriteconfig6 kwriteconfig5; do
+    if command -v "${kw}" >/dev/null 2>&1; then
+      "${kw}" --file kcminputrc --group Mouse --key cursorTheme BunnyCursor 2>/dev/null \
+        && log "cursor theme set to BunnyCursor (${kw})" || true
+    fi
+  done
+  for conf in "${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/gtk-3.0/settings.ini" \
+              "${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/gtk-4.0/settings.ini"; do
+    mkdir -p "$(dirname "${conf}")" 2>/dev/null || true
+    if grep -q '^gtk-cursor-theme-name=' "${conf}" 2>/dev/null; then
+      sed -i 's/^gtk-cursor-theme-name=.*/gtk-cursor-theme-name=BunnyCursor/' "${conf}" 2>/dev/null || true
+    else
+      printf 'gtk-cursor-theme-name=BunnyCursor\n' >> "${conf}" 2>/dev/null || true
+    fi
+  done
+  log "gtk cursor theme set to BunnyCursor"
+else
+  log "BunnyCursor theme not installed; keeping the host cursor"
+fi
+
 exit 0

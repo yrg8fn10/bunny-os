@@ -179,6 +179,19 @@ else
   warn "wallpaper payload missing; the desktop keeps the host default"
 fi
 
+# --- 2b-2. the Bunny cursor set -------------------------------------------------
+step "Installing the Bunny cursor set"
+if [[ -d "${HERE}/cursors" ]]; then
+  run rm -rf "${DESTDIR}/usr/share/icons/BunnyCursor"
+  run install -d -m 0755 "${DESTDIR}/usr/share/icons"
+  run cp -a "${HERE}/cursors/." "${DESTDIR}/usr/share/icons/BunnyCursor/"
+  find "${DESTDIR}/usr/share/icons/BunnyCursor" -type d -exec chmod 0755 {} + 2>/dev/null || true
+  find "${DESTDIR}/usr/share/icons/BunnyCursor" -type f -exec chmod 0644 {} + 2>/dev/null || true
+  info "cursors  : /usr/share/icons/BunnyCursor (BunnyCursor theme)"
+else
+  warn "cursor payload missing; the desktop keeps the host default cursor"
+fi
+
 # --- 2c. the Bun Bun agent -----------------------------------------------------
 AGENT_DIR="${LIB}/bunbun"
 step "Installing the Bun Bun agent"

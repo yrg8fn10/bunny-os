@@ -76,6 +76,7 @@ RUN set -eux; \
     test -d /usr/share/bunny-os/decky-theme/bunny-cute; \
     test -f /usr/share/bunny-os/boot-movie/bunny-os-boot.webm; \
     test -f /usr/share/applications/bunny-os.desktop; \
+    test -d /usr/share/icons/BunnyCursor/cursors; \
     test -f /usr/lib/systemd/user/bunny-bunbun.service; \
     test -f /usr/lib/systemd/user/bunny-bunhud.service; \
     test -f /usr/lib/bunny/bunhud/bunhud.py; \
