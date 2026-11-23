@@ -52,3 +52,77 @@ body {
   background-image: none !important;
   background-color: rgba(36, 22, 51, 0.55) !important;
 }
+
+/* ============================================================
+   v1.2 - the cute & friendly overhaul (Nov 23 2026)
+   Direction locked with Ava: Game Mode should feel like Bun Bun
+   welcoming you in, not a cold launcher. Warm pastel pink
+   everywhere Steam's blue used to be, soft shapes, a friendly
+   glow on whatever is focused. Substring class matching only.
+   ============================================================ */
+
+:root {
+  --bunny-pink: #ffb3d9;
+  --bunny-pink-deep: #ff9cc7;
+  --bunny-pink-glow: rgba(255, 156, 199, 0.55);
+}
+
+/* Steam's blue accents go pastel pink: primary buttons, toggles and
+   highlights substring-match the client's class names. */
+[class*="gamepadtoggle_Toggle_"] [class*="gamepadtoggle_ToggleSwitch_"],
+[class*="gamepadslider_SliderControl"] [class*="gamepadslider_SliderTrackAndFill_"] > [class*="Fill"],
+[class*="gamepadbutton_Button_"][class*="Primary"],
+[class*="appdetailsplaysection_PlayBox"],
+[class*="DialogButton_Primary"],
+[class*="appprogressbar_ActiveAppStatus_"] {
+  background: linear-gradient(180deg, var(--bunny-pink) 0%, var(--bunny-pink-deep) 100%) !important;
+  color: #3a2233 !important;
+}
+
+/* Focus glow: whatever tile or button the Deck is on gets a soft pink ring. */
+[class*="gamepadtile_NavigateFocus"],
+[class*="gamepadhomerecentgames_NavigateFocus"],
+[class*="focusrow_FocusRowActive"],
+[class*="gamepadbutton_Button_"]:focus {
+  box-shadow: 0 0 18px 2px var(--bunny-pink-glow) !important;
+  outline: 2px solid var(--bunny-pink) !important;
+  outline-offset: -2px !important;
+  border-radius: 14px !important;
+}
+
+/* Everything gets friendlier corners: buttons, tiles, panels, toggles. */
+[class*="gamepadtile_"],
+[class*="gamepadbutton_Button_"],
+[class*="Panel_Section"],
+[class*="appactivitydialog_"],
+[class*="Dialog_Floating"],
+[class*="basicappdetailsappheader_"],
+[class*="gamepadhomeshowcase_"] {
+  border-radius: 16px !important;
+}
+
+/* Progress bars fill pink (downloads, installs, updates). */
+[class*="appprogressbar_ProgressBar"] [class*="ProgressBar_Fill"],
+[class*="installprogress_"] [class*="Progress"],
+[class*="ProgressFill"] {
+  background: var(--bunny-pink) !important;
+}
+
+/* Loading spinner: a soft pink ring with two little paw dots orbiting.
+   Pure CSS, no assets, so it never breaks on a client update. */
+[class*="LoadingScreen_"],
+[class*="appprogress_SplashScreenLoading"]::after {
+  animation: bunny-pulse 1.6s ease-in-out infinite !important;
+}
+@keyframes bunny-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+
+/* Friendlier empty states: the library grid and friends list stay warm
+   instead of clinical grey. */
+[class*="contenthub_"], [class*="gamelisthome_"],
+[class*="friendslist_"] [class*="Panel_Section"] {
+  background: rgba(36, 22, 51, 0.35) !important;
+  border-radius: 16px !important;
+}
