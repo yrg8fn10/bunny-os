@@ -4,7 +4,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from bunbun.curiosity import Curiosity, _ANSWER_EVENT, _ASKED_EVENT
+from bunbun.curiosity import DEFAULT_BANK, Curiosity, _ANSWER_EVENT, _ASKED_EVENT
 
 
 class FakeStore:
@@ -104,7 +104,7 @@ class TestCuriosity(unittest.TestCase):
         self.assertIsNone(c.maybe_ask(now=2000.0))
 
     def test_bank_is_wholesale(self):
-        bank = json.load(open("bunbun/bunbun/data/curiosity.json"))
+        bank = json.load(open(DEFAULT_BANK))
         forbidden = ("health", "money", "address", "phone", "family",
                      "religion", "politics", "school", "job")
         for q in bank["questions"]:
