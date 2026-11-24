@@ -6,14 +6,18 @@ from bunbun.audio.router import AudioRouter
 from bunbun.config import AgentConfig
 
 
-def test_mic_enabled_by_default_session_gated():
-    # Ava's Nov 3 design: ears on during game sessions, no push-to-talk.
+def test_mic_enabled_by_default_always_listening():
+    # Ava's Nov 24 direction: ears open on the desktop and in Game Mode too;
+    # the privacy gate, the kill switch and the settings switch still apply.
     cfg = AgentConfig()
     assert cfg.mic_enabled is True
     assert cfg.mic_push_to_talk is False
+    assert cfg.mic_listen_mode == "always"
     mic = MicCapture(cfg)
     assert mic.allowed is True
-    # The session gate still holds: nothing is captured outside a game session.
+    # No game session is needed for the scope to open any more.
+    assert mic._scope_open() is True
+    # Nothing is captured here anyway: no PipeWire recorder in the test env.
     assert mic.capture(1.0) is None
 
 
@@ -86,7 +90,7 @@ class FakeSTT:
 
 
 def test_session_mode_listens_without_push_to_talk():
-    cfg = AgentConfig(mic_enabled=True, mic_push_to_talk=False)
+    cfg = AgentConfig(mic_enabled=True, mic_push_to_talk=False, mic_listen_mode="session")
     mic = MicCapture(cfg)
     assert mic._scope_open() is False          # no active session yet
     mic.set_session_active(True)

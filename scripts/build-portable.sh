@@ -184,6 +184,29 @@ license CC BY-NC 4.0. Free for personal and non-commercial use; check the
 license before any commercial redistribution.
 EOF
 
+# --- Bun Bun's ears: whisper.cpp local speech-to-text ----------------------------
+#  She understands speech fully on-device; nothing leaves the machine. The
+#  whisper-cli binary is built once per build host (whisper.cpp; zig cc works
+#  on hosts without a gcc), and the model is the pinned public tiny.en build.
+STT_BIN="${WHISPER_CLI:-/tmp/whisper.cpp/build/bin/whisper-cli}"
+STT_CACHE="${STT_CACHE:-${HOME}/.cache/bunbun-build}"
+STT_MODEL_SHA256="c77c5766f1cef09b6b7d47f21b546cbddd4157886b3b5d6d4f709e91e66c7c2b"
+log_info "stt      staging Bun Bun's local ears (whisper.cpp, tiny.en)"
+if [[ -x "${STT_BIN}" ]]; then
+  mkdir -p "${STAGE}/stt"
+  cp -a "${STT_BIN}" "${STAGE}/stt/whisper-cli"
+  if [[ ! -f "${STT_CACHE}/ggml-tiny.en-q5_1.bin" ]]; then
+    mkdir -p "${STT_CACHE}"
+    log_info "stt      fetching the tiny.en model (pinned)"
+    curl -fL --retry 3 -o "${STT_CACHE}/ggml-tiny.en-q5_1.bin" \
+      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin"
+  fi
+  sha_ok "${STT_CACHE}/ggml-tiny.en-q5_1.bin" "${STT_MODEL_SHA256}" || die "speech model checksum mismatch"
+  cp -a "${STT_CACHE}/ggml-tiny.en-q5_1.bin" "${STAGE}/stt/"
+else
+  log_warn "no whisper-cli found at ${STT_BIN}; this payload ships without Bun Bun's ears"
+fi
+
 # --- documentation and installer --------------------------------------------
 cp -a "${ROOT}/packaging/portable/install.sh"   "${STAGE}/install.sh"
 cp -a "${ROOT}/packaging/portable/uninstall.sh" "${STAGE}/uninstall.sh"

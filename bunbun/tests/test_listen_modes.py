@@ -8,7 +8,7 @@ from bunbun.audio.mic import MicCapture, build_stt
 
 class FakeConfig:
     def __init__(self, mic_enabled=True, push_to_talk=False,
-                 listen_mode="session", mic_stt="none", whisper_model=None):
+                 listen_mode="always", mic_stt="none", whisper_model=None):
         self.mic_enabled = mic_enabled
         self.mic_push_to_talk = push_to_talk
         self.mic_listen_mode = listen_mode
@@ -25,7 +25,7 @@ class ScopeTests(unittest.TestCase):
         return MicCapture(FakeConfig(**kwargs))
 
     def test_session_mode_stays_out_of_desktop(self):
-        mic = self.mic()
+        mic = self.mic(listen_mode="session")
         self.assertFalse(mic._scope_open())
         mic.set_session_active(True)
         self.assertTrue(mic._scope_open())
@@ -56,7 +56,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(mic.stats["gated"], 1)
 
     def test_listen_mode_read(self):
-        self.assertEqual(self.mic().listen_mode, "session")
+        self.assertEqual(self.mic().listen_mode, "always")
         self.assertEqual(self.mic(listen_mode="always").listen_mode, "always")
 
     def test_build_stt_none_when_disabled(self):

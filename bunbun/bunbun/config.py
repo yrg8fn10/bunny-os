@@ -37,10 +37,10 @@ class AgentConfig:
     local_only: bool = True
     memory_enabled: bool = True
     tts_backend: str = "auto"       # auto|piper|espeak|none
-    mic_enabled: bool = True        # ears on during sessions per Ava's Nov 3 design; gates still apply
-    mic_push_to_talk: bool = False  # no push-to-talk per Ava's Nov 3 design; the session gate decides
+    mic_enabled: bool = True        # ears on; per Ava's Nov 24 direction she listens on the desktop and in Game Mode too
+    mic_push_to_talk: bool = False  # no push-to-talk per Ava's Nov 3 design
     mic_stt: str = "auto"           # auto|whisper|none (local only)
-    mic_listen_mode: str = "session"  # session|always (pre10: ears stay open)
+    mic_listen_mode: str = "always"  # session|always; always is the default now: ears open on the desktop and in Game Mode (Ava, Nov 24 2026)
     mic_poll_seconds: float = 1.5   # cadence of the listening loop
     whisper_model: Path | None = None  # local whisper.cpp model; never bundled
     mic_device: str = ""            # PipeWire target; empty = default source

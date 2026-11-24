@@ -206,7 +206,13 @@ if [[ -d "${HERE}/decky-theme/bunny-cute" ]]; then
   if [[ -n "${THEME_USER}" ]]; then
     THEME_HOME="$(getent passwd "${THEME_USER}" 2>/dev/null | cut -d: -f6)"
   fi
-  THEME_HOME="${THEME_HOME:-${HOME:-/home/deck}}"
+  # The updater usually runs as root, where ${HOME} is /root and no theme
+  # loader lives there. The deck user is the one Decky reads, so fall back
+  # to that home explicitly instead of the running user's ${HOME}.
+  if [[ -z "${THEME_HOME}" ]]; then
+    THEME_HOME="$(getent passwd deck 2>/dev/null | cut -d: -f6)"
+  fi
+  THEME_HOME="${THEME_HOME:-/home/deck}"
   if [[ -d "${DESTDIR}${THEME_HOME}/homebrew/themes" ]]; then
     run rm -rf "${DESTDIR}${THEME_HOME}/homebrew/themes/bunny-cute"
     run cp -a "${HERE}/decky-theme/bunny-cute" "${DESTDIR}${THEME_HOME}/homebrew/themes/bunny-cute"
@@ -230,6 +236,19 @@ if [[ -f "${HERE}/agent/bunbun/service.py" ]]; then
   info "agent    : ${AGENT_DIR} (bunbun.service on 127.0.0.1:8422)"
 else
   warn "agent payload missing; the panel will show Bun Bun offline"
+fi
+
+# --- 2c-bis. Bun Bun's ears (local speech-to-text) --------------------------------
+#  whisper.cpp runs on-device; the transcript goes to her brain and nowhere else.
+if [[ -f "${HERE}/stt/whisper-cli" && -f "${HERE}/stt/ggml-tiny.en-q5_1.bin" ]]; then
+  step "Installing the local speech model (Bun Bun's ears)"
+  run install -m 0755 "${HERE}/stt/whisper-cli" "${DESTDIR}${BIN}/whisper-cli"
+  run install -d -m 0755 "${DESTDIR}/usr/share/bunbun/stt"
+  run install -m 0644 "${HERE}/stt/ggml-tiny.en-q5_1.bin" \
+      "${DESTDIR}/usr/share/bunbun/stt/ggml-tiny.en-q5_1.bin"
+  info "ears     : whisper-cli in ${BIN}, tiny.en model in /usr/share/bunbun/stt"
+else
+  warn "stt payload missing; Bun Bun cannot transcribe speech this install"
 fi
 
 # --- 2d. Piper and the neural voice ---------------------------------------------

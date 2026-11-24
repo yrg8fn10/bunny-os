@@ -1,15 +1,18 @@
 """Consent-gated microphone capture (Deliverable 3).
 
-Ava's listening model, v2 (Nov 3, 2026): **no push-to-talk button.** While a
-game session is active, Bun Bun listens like a companion beside you, and she
-polices herself: the privacy gate closes her ears on private topics, deletes
-the audio, and she only comes back for game talk.
+Ava's listening model, v3 (Nov 24, 2026): **no push-to-talk button, and the
+ears stay open on the desktop and in Game Mode.** Ava's v2 rule (Nov 3, 2026)
+was session-only listening; on Nov 24 she widened the scope: Bun Bun listens
+like a companion beside you everywhere, and she polices herself the same way
+as before — the privacy gate closes her ears on private topics, deletes the
+audio, and she only comes back for game talk. Only the scope changed; every
+gate stayed.
 
 Capture still passes gates, in order:
 
-1. ``mic_enabled`` in settings (default: **True**, session mode per Ava's Nov 3 design: ears open during game sessions, closed everywhere else);
-2. scope: in push-to-talk mode an open listening window; in session mode an
-   *active game session* (never the desktop, never while idle);
+1. ``mic_enabled`` in settings (default: **True**, always mode per Ava's Nov 24 direction: ears open on the desktop and in Game Mode, privacy gates still apply);
+2. scope: in push-to-talk mode an open listening window; in always mode the
+   whole machine is in scope; in session mode an active game session;
 3. the privacy cooldown after a private-topic hit;
 4. the PipeWire source itself: muted (hardware kill switch) or unreadable means
    refuse. **Unknown is treated as unavailable, never as available.**
@@ -197,10 +200,10 @@ class MicCapture:
 class WhisperBackend:
     """Local speech-to-text via whisper.cpp. Optional; the fallback is silence.
 
-    The model is **not** shipped in this repository (see
-    ``scripts/fetch-sources.sh --voices``). Transcription happens on the
-    machine; the text goes to the MAM engine as a player-speech event and
-    nowhere else.
+    The payload ships whisper-cli and the tiny.en model (staged by
+    ``scripts/build-portable.sh``, installed by ``install.sh`` at
+    ``/usr/share/bunbun/stt``). Transcription happens on the machine; the
+    text goes to the MAM engine as a player-speech event and nowhere else.
     """
 
     def __init__(self, binary: str = "whisper-cli",
