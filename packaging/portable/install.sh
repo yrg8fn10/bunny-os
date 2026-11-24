@@ -204,13 +204,13 @@ if [[ -d "${HERE}/decky-theme/bunny-cute" ]]; then
   THEME_USER="${SUDO_USER:-}"
   THEME_HOME=""
   if [[ -n "${THEME_USER}" ]]; then
-    THEME_HOME="$(getent passwd "${THEME_USER}" 2>/dev/null | cut -d: -f6)"
+    THEME_HOME="$(getent passwd "${THEME_USER}" 2>/dev/null | cut -d: -f6 || true)"
   fi
   # The updater usually runs as root, where ${HOME} is /root and no theme
   # loader lives there. The deck user is the one Decky reads, so fall back
   # to that home explicitly instead of the running user's ${HOME}.
   if [[ -z "${THEME_HOME}" ]]; then
-    THEME_HOME="$(getent passwd deck 2>/dev/null | cut -d: -f6)"
+    THEME_HOME="$(getent passwd deck 2>/dev/null | cut -d: -f6 || true)"
   fi
   THEME_HOME="${THEME_HOME:-/home/deck}"
   if [[ -d "${DESTDIR}${THEME_HOME}/homebrew/themes" ]]; then
