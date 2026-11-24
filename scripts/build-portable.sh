@@ -126,6 +126,14 @@ mkdir -p "${STAGE}/cursors"
 [[ -f "${ROOT}/assets/cursors/BunnyCursor/index.theme" ]] || die "missing ${ROOT}/assets/cursors/BunnyCursor/index.theme"
 cp -a "${ROOT}/assets/cursors/BunnyCursor/." "${STAGE}/cursors/"
 
+# --- the Game Mode theme (CSS Loader, bunny-cute) --------------------------------
+#  The ISO bakes this at /usr/share/bunny-os/decky-theme. The payload carries it
+#  too, so an upgrade refreshes the theme on an already-running Deck without a
+#  reflash: new CSS, ears, and paw spinner land with the same bunny-upgrade.
+mkdir -p "${STAGE}/decky-theme"
+[[ -d "${ROOT}/packaging/bazzite/decky-theme/bunny-cute" ]] || die "missing ${ROOT}/packaging/bazzite/decky-theme/bunny-cute"
+cp -a "${ROOT}/packaging/bazzite/decky-theme/bunny-cute" "${STAGE}/decky-theme/bunny-cute"
+
 # --- the neural voice (Piper, bundled so Bun Bun sounds human out of the box) ---
 #  Pinned upstream URLs + sha256: the model ships as bunny-default.onnx, the key
 #  the engine's find_voice() looks for in /usr/share/bunbun/voices.

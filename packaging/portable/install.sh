@@ -192,6 +192,32 @@ else
   warn "cursor payload missing; the desktop keeps the host default cursor"
 fi
 
+# --- 2b-3. the Game Mode theme (CSS Loader) --------------------------------------
+#  Same layout the ISO uses: system copy under /usr/share/bunny-os/decky-theme,
+#  then placed where Decky's CSS Loader reads themes (the deck user's
+#  homebrew/themes). Best effort: Decky may not be installed on a portable host.
+step "Updating the Game Mode theme (CSS Loader)"
+if [[ -d "${HERE}/decky-theme/bunny-cute" ]]; then
+  run install -d -m 0755 "${DESTDIR}/usr/share/bunny-os/decky-theme"
+  run rm -rf "${DESTDIR}/usr/share/bunny-os/decky-theme/bunny-cute"
+  run cp -a "${HERE}/decky-theme/bunny-cute" "${DESTDIR}/usr/share/bunny-os/decky-theme/bunny-cute"
+  THEME_USER="${SUDO_USER:-}"
+  THEME_HOME=""
+  if [[ -n "${THEME_USER}" ]]; then
+    THEME_HOME="$(getent passwd "${THEME_USER}" 2>/dev/null | cut -d: -f6)"
+  fi
+  THEME_HOME="${THEME_HOME:-${HOME:-/home/deck}}"
+  if [[ -d "${DESTDIR}${THEME_HOME}/homebrew/themes" ]]; then
+    run rm -rf "${DESTDIR}${THEME_HOME}/homebrew/themes/bunny-cute"
+    run cp -a "${HERE}/decky-theme/bunny-cute" "${DESTDIR}${THEME_HOME}/homebrew/themes/bunny-cute"
+    info "theme    : ${THEME_HOME}/homebrew/themes/bunny-cute (CSS Loader picks it up)"
+  else
+    warn "no Decky themes dir found; theme staged at /usr/share/bunny-os/decky-theme/bunny-cute"
+  fi
+else
+  warn "theme payload missing; Game Mode keeps its current theme version"
+fi
+
 # --- 2c. the Bun Bun agent -----------------------------------------------------
 AGENT_DIR="${LIB}/bunbun"
 step "Installing the Bun Bun agent"
