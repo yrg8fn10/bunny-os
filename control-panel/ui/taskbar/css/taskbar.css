@@ -1,0 +1,108 @@
+/* Bunny taskbar - the Mac-like dock on the bunny palette.
+   Tokens follow packaging/bazzite tokens.json: cream #FFF7EC, blossom
+   #F7D6E0, ink #2B2E4A, bunny pink #FF9ABF. */
+:root {
+  --bunny-pink: #FF9ABF;
+  --bunny-pink-deep: #E39CB8;
+  --cream: #FFF7EC;
+  --blossom: #F7D6E0;
+  --ink: #2B2E4A;
+  --bar-h: 74px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: grid;
+  place-items: end center;
+  background: transparent;
+  font-family: "Nunito", "Quicksand", "DejaVu Sans", system-ui, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+.dock {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 9px 16px 11px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--cream) 78%, transparent);
+  background: rgba(255, 247, 236, 0.78);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  border: 2px solid rgba(255, 154, 191, 0.5);
+  box-shadow: 0 10px 30px rgba(43, 46, 74, 0.28), 0 2px 0 rgba(255, 255, 255, 0.5) inset;
+}
+.launcher {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.glyph {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  transform: scale(var(--mag, 1));
+  transform-origin: 50% 100%;
+  transition: transform 0.18s cubic-bezier(0.34, 1.6, 0.64, 1);
+  filter: drop-shadow(0 3px 6px rgba(43, 46, 74, 0.25));
+}
+.glyph svg { width: 44px; height: 44px; display: block; }
+.launcher:hover .glyph, .launcher:focus-visible .glyph { outline: none; }
+.launcher:focus-visible .glyph { box-shadow: 0 0 0 3px var(--bunny-pink); }
+.launcher.bunny .glyph { background: rgba(255, 154, 191, 0.16); }
+.launcher.bunny:hover .glyph { animation: wiggle 0.5s ease-in-out; }
+@keyframes wiggle {
+  0%, 100% { transform: scale(var(--mag, 1)) rotate(0deg); }
+  30% { transform: scale(var(--mag, 1)) rotate(-7deg); }
+  65% { transform: scale(var(--mag, 1)) rotate(7deg); }
+}
+.dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--bunny-pink);
+  box-shadow: 0 0 6px var(--bunny-pink);
+  margin-top: 3px;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.dot.on { opacity: 1; transform: scale(1); }
+.divider { width: 2px; height: 40px; border-radius: 2px; background: rgba(255, 154, 191, 0.35); margin: 0 6px; align-self: center; }
+.clock {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 14px;
+  color: var(--ink);
+}
+.clock:hover { background: rgba(255, 154, 191, 0.16); }
+.clock-day { font-size: 12px; font-weight: 700; color: var(--bunny-pink-deep); letter-spacing: 0.08em; text-transform: uppercase; }
+.clock-time { font-size: 19px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tip {
+  position: fixed;
+  bottom: calc(6px + var(--bar-h) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(43, 46, 74, 0.92);
+  color: var(--cream);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(255, 154, 191, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.tip.on { opacity: 1; }

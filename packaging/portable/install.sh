@@ -522,6 +522,19 @@ info "apps     : bunny-os.desktop, bunny-os-setup.desktop"
 
 if (( AUTOSTART )); then
   run install -d -m 0755 "${DESTDIR}${AUTOSTART_DIR}"
+  # The desktop dock: starts with Desktop Mode, Game Mode untouched.
+  put "${DESTDIR}${AUTOSTART_DIR}/bunny-taskbar.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Bunny taskbar
+Comment=The Bun Bun desktop dock: Mac-like, cute, bunny-pink
+Exec=${BIN}/bunny-taskbar
+Terminal=false
+Categories=Utility;
+Keywords=taskbar;dock;bunny;
+X-KDE-autostart-phase=desktop
+EOF
+  chmod 0644 "${DESTDIR}${AUTOSTART_DIR}/bunny-taskbar.desktop" 2>/dev/null || true
   put "${DESTDIR}${AUTOSTART_DIR}/bunny-os-setup.desktop" <<EOF
 [Desktop Entry]
 Type=Application

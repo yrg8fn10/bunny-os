@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Bunny taskbar
+Comment=The Bun Bun desktop dock: Mac-like, cute, bunny-pink
+Exec=/usr/local/bin/bunny-taskbar
+Terminal=false
+Categories=Utility;
+Keywords=taskbar;dock;bunny;
+X-KDE-autostart-phase=desktop

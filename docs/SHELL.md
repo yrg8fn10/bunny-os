@@ -106,6 +106,18 @@ the tokens at build time, so a restyle is one file edit.
 - Playback only. The shell never opens the microphone; capture belongs to the
   audio routing layer (Deliverable 3) and the hardware kill switch.
 
+## 5b. The desktop dock (the Bun Bun taskbar)
+
+Desktop Mode gets its own dock: `bunny-taskbar` serves the Mac-like cute
+dock UI (`control-panel/ui/taskbar/`) on loopback and opens it as a small
+frameless Chromium window pinned to the bottom edge by KWin window rules
+(bottom-centre, borderless, skip taskbar and pager, keep above). It is a
+normal compositor client, not a Steam replacement, and never touches Game
+Mode. Its local server binds 127.0.0.1 only, re-checks the Host header,
+serves a fixed whitelist of paths, and launches a fixed whitelist of apps.
+Autostart rides `/etc/xdg/autostart/bunny-taskbar.desktop`. See
+`taskbar/README.md`.
+
 ## 6. Repository layout added by this deliverable
 
 ```

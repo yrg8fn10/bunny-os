@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""bunny-taskbar - the Bun Bun desktop dock (the Mac-like cute taskbar).
+
+Desktop Mode only: a small frameless Chromium window pinned to the bottom
+edge of the screen by KWin window rules, serving the dock UI from
+``/taskbar`` inside the Control Panel's own UI directory. It is a normal
+compositor client, not a Steam replacement, and never touches Game Mode.
+
+Security posture mirrors bunny-panel-bridge:
+  * binds 127.0.0.1 only,
+  * runs as the desktop user, never as root,
+  * re-checks the Host header so a website cannot DNS-rebind to it,
+  * serves a fixed whitelist of taskbar paths (no traversal),
+  * launches a fixed whitelist of apps (no arbitrary commands).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+LOG = logging.getLogger("bunny-taskbar")
+MAX_BODY = 4 * 1024
+DEFAULT_UI = Path(os.environ.get("BUNNY_PANEL_UI", "/opt/bunny/panel/ui")) / "taskbar"
+DEFAULT_PORT = 8433
+RULE_DESCRIPTION = "Bunny taskbar dock"
+
+# The dock's launchers. A fixed whitelist: the web UI cannot name anything.
+APPS = {
+    "bunny":    {"name": "Bun Bun",  "candidates": ("bunny-panel",)},
+    "steam":    {"name": "Steam",    "candidates": ("steam",)},
+    "files":    {"name": "Files",    "candidates": ("dolphin", "nautilus", "pcmanfm")},
+    "browser":  {"name": "Browser",  "candidates": ("firefox", "chromium", "google-chrome-stable")},
+    "terminal": {"name": "Terminal", "candidates": ("konsole", "gnome-terminal", "xterm")},
+    "settings": {"name": "Settings", "candidates": ("systemsettings", "gnome-control-center")},
+}
+PROC_HINTS = {
+    "steam": ("steam",),
+    "files": ("dolphin", "nautilus", "pcmanfm"),
+    "browser": ("firefox", "chrome"),
+    "terminal": ("konsole", "gnome-terminal", "xterm"),
+    "settings": ("systemsettings", "gnome-control-center"),
+    "bunny": ("bunny-panel",),
+}
+
+STATIC = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/css/taskbar.css": ("css/taskbar.css", "text/css; charset=utf-8"),
+    "/js/taskbar.js": ("js/taskbar.js", "application/javascript; charset=utf-8"),
+}
+
+
+def running_ids() -> dict[str, bool]:
+    seen: set[str] = set()
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            comm = (proc / "comm").read_text().strip().lower()
+        except OSError:
+            continue
+        seen.add(comm)
+    return {
+        app_id: any(hint in seen for hint in hints)
+        for app_id, hints in PROC_HINTS.items()
+    }
+
+
+def launch(app_id: str) -> bool:
+    spec = APPS.get(app_id)
+    if not spec:
+        return False
+    for candidate in spec["candidates"]:
+        path = shutil.which(candidate)
+        if path:
+            subprocess.Popen(
+                [path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+    return False
+
+
+def make_handler(ui: Path):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "bunny-taskbar"
+
+        def _blocked(self) -> bool:
+            host = self.headers.get("Host", "").split(":", 1)[0]
+            return host not in ("127.0.0.1", "localhost")
+
+        def do_GET(self) -> None:  # noqa: N802 (http.server API)
+            if self._blocked():
+                self.send_error(403)
+                return
+            entry = STATIC.get(self.path)
+            if entry is None:
+                self.send_error(404)
+                return
+            filename, ctype = entry
+            path = (ui / filename).resolve()
+            if not str(path).startswith(str(ui.resolve())):
+                self.send_error(404)
+                return
+            try:
+                body = path.read_bytes()
+            except OSError:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self) -> None:  # noqa: N802 (http.server API)
+            if self._blocked():
+                self.send_error(403)
+                return
+            if self.path != "/api/launch":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            if length > MAX_BODY:
+                self.send_error(413)
+                return
+            raw = self.rfile.read(length)
+            ok = False
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+                if isinstance(payload, dict):
+                    ok = launch(str(payload.get("id", "")))
+            except (ValueError, OSError):
+                ok = False
+            body = b'{"launched": ' + ("true" if ok else "false").encode() + b"}"
+            self.send_response(200 if ok else 409)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt: str, *args) -> None:  # silence the console
+            LOG.debug(fmt, *args)
+
+    return Handler
+
+
+def serve_forever(ui: Path, port: int) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(ui))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
+
+
+# --- KWin window rules: pin the dock bottom-centre, borderless, above -------
+def screen_size() -> tuple[int, int]:
+    try:
+        out = subprocess.run(
+            ["kscreen-doctor", "-o"], capture_output=True, text=True, timeout=5
+        ).stdout
+        for token in out.split():
+            if "x" in token and token.replace("x", "").isdigit() and "," not in token:
+                width, _, height = token.partition("x")
+                return int(width), int(height)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return 1280, 800  # the Deck's own resolution
+
+
+def pin_kwin_rule(width: int, height: int) -> bool:
+    """Force the dock window to the bottom-centre with KWin window rules."""
+    sw, sh = screen_size()
+    bar_w = min(sw - 60, 980)
+    bar_h = 92
+    x = max(0, (sw - bar_w) // 2)
+    y = max(0, sh - bar_h - 8)
+
+    helper = shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
+    if not helper:
+        LOG.warning("no kwriteconfig; the dock will open unpinned")
+        return False
+
+    rules_file = Path(os.environ.get("HOME", "/tmp")) / ".config" / "kwinrulesrc"
+    group = "1"
+    if rules_file.exists():
+        existing = set()
+        for line in rules_file.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                existing.add(line[1:-1])
+        n = 1
+        while str(n) in existing:
+            n += 1
+        group = str(n)
+
+    values = {
+        "Description": RULE_DESCRIPTION,
+        "enabled": "true",
+        "types": "1",
+        "wmclass": "bunny-taskbar",
+        "wmclassmatch": "1",
+        "wmclasscomplete": "1",
+        "sizerule": "3",
+        "size": f"({bar_w},{bar_h})",
+        "positionrule": "3",
+        "position": f"({x},{y})",
+        "noborder": "true",
+        "noborderrule": "3",
+        "skiptaskbar": "true",
+        "skiptaskbarrule": "3",
+        "skippager": "true",
+        "skippagerrule": "3",
+        "keepabove": "true",
+        "keepaboverule": "3",
+    }
+    try:
+        for key, value in values.items():
+            subprocess.run(
+                [helper, "--file", str(rules_file), "--group", group, "--key", key, value],
+                check=True,
+                capture_output=True,
+                timeout=5,
+            )
+    except (OSError, subprocess.SubprocessError) as err:
+        LOG.warning("writing the dock window rule failed: %s", err)
+        return False
+
+    for qdbus in ("qdbus6", "qdbus-qt6", "qdbus", "dbus-send"):
+        if shutil.which(qdbus):
+            cmd = [qdbus, "org.kde.KWin", "/KWin", "reconfigure"]
+            if qdbus == "dbus-send":
+                cmd = ["dbus-send", "--type=method_call", "--print-reply",
+                       "--dest=org.kde.KWin", "/KWin", "org.freedesktop.DBus.Peer.Ping"]
+            try:
+                subprocess.run(cmd, capture_output=True, timeout=5)
+                break
+            except OSError:
+                continue
+    LOG.info("dock rule pinned: %dx%d at (%d,%d) in kwinrulesrc group %s", bar_w, bar_h, x, y, group)
+    return True
+
+
+def find_browser() -> str | None:
+    env = os.environ.get("BUNNY_BROWSER")
+    if env and shutil.which(env):
+        return env
+    for candidate in ("chromium", "chromium-browser", "google-chrome-stable",
+                      "google-chrome", "microsoft-edge", "brave-browser"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Bun Bun desktop taskbar")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--ui", type=Path, default=DEFAULT_UI,
+                        help="directory holding taskbar/index.html")
+    parser.add_argument("--serve-only", action="store_true",
+                        help="run the local server, do not open a browser window (dev)")
+    parser.add_argument("--quit", action="store_true",
+                        help="stop a running taskbar (server and window)")
+    parser.add_argument("--no-pin", action="store_true",
+                        help="skip the KWin window rule (the dock floats instead)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="bunny-taskbar: %(message)s")
+
+    if args.quit:
+        subprocess.run(["pkill", "-f", "bunny-taskbar-profile"], capture_output=True)
+        subprocess.run(["pkill", "-f", "system/bin/bunny-taskbar"], capture_output=True)
+        print("bunny-taskbar: stopped")
+        return 0
+
+    ui = args.ui
+    if not (ui / "index.html").exists():
+        # Dev mode: running from a source checkout.
+        dev = Path(__file__).resolve().parent.parent.parent / "control-panel" / "ui" / "taskbar"
+        if (dev / "index.html").exists():
+            ui = dev
+        else:
+            LOG.error("taskbar UI not found at %s", ui)
+            return 1
+
+    serve_forever(ui, args.port)
+    LOG.info("dock API on http://127.0.0.1:%d (ui: %s)", args.port, ui)
+
+    if args.serve_only:
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+        return 0
+
+    if not args.no_pin:
+        pin_kwin_rule(0, 0)
+
+    browser = find_browser()
+    if not browser:
+        LOG.error("no Chromium-family browser found; the dock UI is served at "
+                  "http://127.0.0.1:%d - open it manually", args.port)
+        return 1
+    profile = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "bunny" / "taskbar-profile"
+    subprocess.Popen(
+        [
+            browser,
+            "--app=http://127.0.0.1:%d/" % args.port,
+            "--window-size=980,92",
+            "--class=bunny-taskbar",
+            "--user-data-dir=" + str(profile),
+            "--no-first-run",
+            "--disable-features=Translate",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    LOG.info("dock window launched")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
