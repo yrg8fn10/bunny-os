@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 from collections import deque
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,14 @@ _THANKS = re.compile(r"\b(thank(s| you)|thanks bun|good (job|girl)|well done|nic
 _SAD = re.compile(r"\bi (?:am|'m|feel)\s+(?:so |really |very |kinda )?(sad|tired|stuck|frustrated|bad)\b|this game sucks|i give up", re.I)
 _BORED = re.compile(r"\b(i'?m bored|boring|nothing to do)\b", re.I)
 _LORE = re.compile(r"\b(earwicks?|protocol seven|species 116|quantum influx)\b", re.I)
+# v0.2 topics (Nov 26, 2026): warmth, humor, capability, time, memory.
+_COMPLIMENT = re.compile(r"\b(you'?re (so |really |very )?(cute|sweet|adorable|the best|awesome|cool|smart|funny)|you'?re great|i like you)\b", re.I)
+_JOKE = re.compile(r"\b(tell (me |us )?(a |another |your )?joke|make me laugh|say something funny)\b", re.I)
+_AFFECTION = re.compile(r"\b(i love you|love you bun|love ya)\b", re.I)
+_HELP = re.compile(r"\b(what can you do|what do you do|how can you help|what are your (skills|features))\b", re.I)
+_TIME = re.compile(r"\b(what time is it|what'?s the time|time check|current time)\b", re.I)
+_DATE = re.compile(r"\b(what'?s (today|the date)|what day is it|today'?s date)\b", re.I)
+_REMEMBER = re.compile(r"\b(what do you (know|remember) about me|do you remember me|remember about me)\b", re.I)
 
 _HISTORY = 8
 
@@ -77,10 +86,15 @@ class ConversationEngine:
     """The talk half of the companion. Rules first; the brain, if any, leads."""
 
     def __init__(self, persona, brain: LocalBrain | None = None,
-                 rng: random.Random | None = None):
+                 rng: random.Random | None = None,
+                 facts_provider=None):
         self.persona = persona
         self.brain = brain
         self.rng = rng or random.Random()
+        # facts_provider(): the get-to-know-you answers Bun Bun remembers
+        # (the curiosity layer's known_facts). Feeds "what do you remember
+        # about me" without coupling this module to the store.
+        self.facts_provider = facts_provider
         self.history: deque = deque(maxlen=_HISTORY)
         self.turns = 0
 
@@ -111,7 +125,35 @@ class ConversationEngine:
             return self.persona.line("chat_bored")
         if _LORE.search(text):
             return self.persona.line("chat_lore")
+        if _COMPLIMENT.search(text):
+            return self.persona.line("chat_compliment")
+        if _AFFECTION.search(text):
+            return self.persona.line("chat_love")
+        if _JOKE.search(text):
+            return self.persona.line("chat_joke")
+        if _HELP.search(text):
+            return self.persona.line("chat_help")
+        if _REMEMBER.search(text):
+            return self._remember_reply()
+        if _TIME.search(text):
+            stamp = datetime.now().strftime("%I:%M %p").lstrip("0")
+            return self.persona.line("chat_time", time=stamp)
+        if _DATE.search(text):
+            n = datetime.now()
+            return self.persona.line("chat_date", date=f"{n:%A}, {n:%B} {n.day}")
         return self.persona.line("chat_fallback")
+
+    def _remember_reply(self) -> str:
+        facts = {}
+        if self.facts_provider is not None:
+            try:
+                facts = self.facts_provider() or {}
+            except Exception:
+                facts = {}
+        if not facts:
+            return self.persona.line("chat_remember_none")
+        picks = ", ".join(str(v) for v in list(facts.values())[:2])
+        return self.persona.line("chat_remember", facts=picks)
 
 
 def build_brain(config) -> LocalBrain | None:
@@ -127,4 +169,6 @@ def persona_pools() -> dict[str, Any]:
     """The conversation line pools this module expects in persona.json."""
     return {key: [] for key in
             ("chat_self", "chat_feel_good", "chat_feel_bad", "chat_praise",
-             "chat_bored", "chat_lore", "chat_fallback")}
+             "chat_bored", "chat_lore", "chat_compliment", "chat_joke",
+             "chat_love", "chat_help", "chat_remember", "chat_remember_none",
+             "chat_time", "chat_date", "chat_fallback")}

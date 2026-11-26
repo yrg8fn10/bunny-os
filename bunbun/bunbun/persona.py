@@ -44,7 +44,13 @@ class Persona:
         self.max_chars = max(40, min(max_chars, 400))
         self.name = data.get("name", "Bun Bun")
         self.voice = data.get("voice", {})
-        self.lines: dict[str, list[str]] = data.get("lines", {})
+        self.lines: dict[str, list[str]] = dict(data.get("lines", {}))
+        # Compat: chat pools ship at the top level of persona.json; merge
+        # them so every shipped line actually reaches the speaker instead
+        # of falling through to idle.
+        for key, value in data.items():
+            if key.startswith("chat_") and isinstance(value, list) and key not in self.lines:
+                self.lines[key] = value
 
     @classmethod
     def load(cls, path: Path | None = None, **kwargs: Any) -> "Persona":

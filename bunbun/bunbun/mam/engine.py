@@ -92,10 +92,12 @@ class MAMEngine:
         library: Any | None = None,
         launcher: Callable[[Any], bool] | None = None,
         config: Any | None = None,
+        facts_provider: Callable[[], dict[str, str]] | None = None,
     ):
         self.persona = persona
         self._conversation: ConversationEngine | None = None
         self.config_ref = config
+        self.facts_provider = facts_provider
         self.hints = hints
         self.settings_provider = settings_provider
         self.memory = memory
@@ -252,7 +254,9 @@ class MAMEngine:
         agent-disabled state and rate limits all still apply.
         """
         if self._conversation is None:
-            self._conversation = ConversationEngine(self.persona, build_brain(self.config_ref))
+            self._conversation = ConversationEngine(
+                self.persona, build_brain(self.config_ref),
+                facts_provider=self.facts_provider)
         reply = self._conversation.reply(text, now=self.clock())
         if not reply:
             return []
