@@ -1,0 +1,23 @@
+# Bunny OS own-image recipe (skeleton, phase 1)
+# Goal: a Bunny OS image built from our own package list and branding,
+# no Bazzite layer anywhere. Built by scripts/build-own-iso.sh (stub).
+name: bunny-os
+version: 0.3.0-ownbase
+summary: "Bunny OS: OSAGON Research's own gamer OS. Cute, local, no time-outs."
+description: |
+  Fully local, no API keys, all-ages, Steam Deck first (both models),
+  AMD + RTX GPU required with a continue-anyway path for other hardware.
+base:
+  # TODO(phase-1): pick the package foundation the recipe builds from.
+  # Decision: NOT Bazzite. Candidate: a minimal Fedora/Arch package set
+  # assembled by our own recipe. Final call recorded here when set.
+packages:
+  # TODO(phase-1): our package list. Kernel + mesa + steam + proton stack
+  # + our overlay (taskbar, updater, wallpapers, bunbun voice, theme).
+branding:
+  name: Bunny OS
+  vendor: OSAGON Research
+  wallpaper-set: bundled (carried over from pre9+)
+  taskbar: carried over (control-panel/ui/taskbar)
+  updater: carried over (bun-bun-os-updates channel)
+  time-out-phase: none (locked requirement)
