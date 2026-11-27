@@ -192,6 +192,27 @@ else
   warn "cursor payload missing; the desktop keeps the host default cursor"
 fi
 
+# --- 2b-2b. Bun Bun's local brain (MAM model) -----------------------------------
+step "Installing Bun Bun's local brain"
+if [[ -d "${HERE}/mam" ]]; then
+  run rm -rf "${DESTDIR}${LIB:?}/mam"
+  run install -d -m 0755 "${DESTDIR}${LIB}/mam"
+  for item in "${HERE}"/mam/*; do
+    [[ -e "${item}" ]] || continue
+    install -m 0755 "${item}" "${DESTDIR}${LIB}/mam/$(basename "${item}")"
+  done
+  info "mam brain : ${LIB}/mam (llama.cpp CLI)"
+fi
+if compgen -G "${HERE}/share/bunbun/models/*.gguf" >/dev/null; then
+  run install -d -m 0755 "${DESTDIR}${PREFIX}/share/bunbun/models"
+  for model in "${HERE}"/share/bunbun/models/*.gguf; do
+    install -m 0644 "${model}" "${DESTDIR}${PREFIX}/share/bunbun/models/$(basename "${model}")"
+  done
+  info "mam model : ${PREFIX}/share/bunbun/models"
+else
+  warn "MAM model missing; Bun Bun falls back to her rule lines"
+fi
+
 # --- 2b-3. the Game Mode theme (CSS Loader) --------------------------------------
 #  Same layout the ISO uses: system copy under /usr/share/bunny-os/decky-theme,
 #  then placed where Decky's CSS Loader reads themes (the deck user's

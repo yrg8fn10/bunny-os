@@ -207,6 +207,31 @@ else
   log_warn "no whisper-cli found at ${STT_BIN}; this payload ships without Bun Bun's ears"
 fi
 
+# --- Bun Bun's brain: the local MAM model (llama.cpp + tiny instruct GGUF) ----
+#  She chats conversationally, fully on-device. The CLI is the pinned public
+#  llama.cpp b12803 ubuntu-x64 build (libs shipped beside it; the wrapper sets
+#  LD_LIBRARY_PATH), the model is Qwen2.5-0.5B-Instruct Q4_K_M GGUF
+#  (Apache-2.0; bartowski quantization). Sources are env-overridable per
+#  build host, like STT_BIN above.
+MAM_CLI_DIR="${MAM_CLI_DIR:-/tmp/llama-b12803}"
+MAM_MODEL_SRC="${MAM_MODEL_SRC:-/tmp/bunbun-model.gguf}"
+log_info "mam      staging Bun Bun's local brain (llama.cpp + Qwen2.5-0.5B Q4_K_M)"
+if [[ -x "${MAM_CLI_DIR}/llama-cli" && -f "${MAM_MODEL_SRC}" ]]; then
+  mkdir -p "${STAGE}/mam" "${STAGE}/share/bunbun/models" "${STAGE}/bin"
+  cp -a "${MAM_CLI_DIR}/llama-cli" "${STAGE}/mam/llama-cli"
+  cp -a "${MAM_CLI_DIR}"/*.so* "${STAGE}/mam/" 2>/dev/null || true
+  cp -a "${MAM_MODEL_SRC}" "${STAGE}/share/bunbun/models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+  cat > "${STAGE}/bin/bunbun-llama-cli" <<'WRAP'
+#!/bin/sh
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LIBS="${DIR}/../lib/bunny/mam"
+LD_LIBRARY_PATH="${LIBS}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" exec "${LIBS}/llama-cli" "$@"
+WRAP
+  chmod 0755 "${STAGE}/bin/bunbun-llama-cli"
+else
+  log_warn "no llama.cpp CLI / model found (${MAM_CLI_DIR}, ${MAM_MODEL_SRC}); this payload ships without Bun Bun's local brain"
+fi
+
 # --- documentation and installer --------------------------------------------
 cp -a "${ROOT}/packaging/portable/install.sh"   "${STAGE}/install.sh"
 cp -a "${ROOT}/packaging/portable/uninstall.sh" "${STAGE}/uninstall.sh"

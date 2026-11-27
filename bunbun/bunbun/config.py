@@ -44,6 +44,12 @@ class AgentConfig:
     mic_poll_seconds: float = 1.5   # cadence of the listening loop
     whisper_model: Path | None = None  # local whisper.cpp model; never bundled
     mic_device: str = ""            # PipeWire target; empty = default source
+    mam_enabled: bool = True        # the local MAM brain (bundled model, llama.cpp CLI); off = rule lines only
+    mam_model_path: Path | None = None  # bundled Q4 GGUF; None = auto-find in the standard share paths
+    mam_llama_cli: Path | None = None   # llama.cpp CLI binary; None = auto-find (bunbun-llama-cli, then llama-cli)
+    mam_max_tokens: int = 64        # one short spoken sentence
+    mam_temp: float = 0.8
+    mam_timeout: float = 20.0       # seconds; a slow reply loses to the rule lines
     curiosity_enabled: bool = True  # the get-to-know-you layer (Ava, Nov 17 2026); asks are rare and local-only
     curiosity_minutes_into_session: float = 12.0  # warm-up before her first question in a session
     curiosity_max_per_week: int = 0  # 0 = unlimited (Ava's ask, Nov 17 2026); set a number to cap questions per rolling week
@@ -136,6 +142,12 @@ def load_config(settings_file: Path | None = None,
         curiosity_minutes_into_session=float(pick(
             "curiosity_minutes_into_session", cfg.curiosity_minutes_into_session)),
         curiosity_max_per_week=int(pick("curiosity_max_per_week", cfg.curiosity_max_per_week)),
+        mam_enabled=_coerce_bool(pick("mam_enabled", cfg.mam_enabled), cfg.mam_enabled),
+        mam_model_path=_optional_path(pick("mam_model_path", None)),
+        mam_llama_cli=_optional_path(pick("mam_llama_cli", None)),
+        mam_max_tokens=int(pick("mam_max_tokens", cfg.mam_max_tokens)),
+        mam_temp=float(pick("mam_temp", cfg.mam_temp)),
+        mam_timeout=float(pick("mam_timeout", cfg.mam_timeout)),
     )
 
     env = os.environ

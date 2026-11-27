@@ -209,6 +209,11 @@
     "Protocol Seven is watching... quietly. Just kidding, keep playing!",
     "That's deep-hutch knowledge! I love that you remember."
   ],
+  "chat_curious": [
+    "Ooh, I remembered: {fact}. Tell me more sometime?",
+    "Bunny memory moment: {fact}. I like knowing that about you!",
+    "Hey, I kept that in my little notebook: {fact}. Bunnies never forget."
+  ],
   "chat_fallback": [
     "I hear you! Tell me more while you play?",
     "Mmhm, I'm listening, keep going!",
