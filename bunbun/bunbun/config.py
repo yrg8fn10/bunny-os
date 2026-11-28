@@ -36,7 +36,7 @@ class AgentConfig:
     kid_safe: bool = True
     local_only: bool = True
     memory_enabled: bool = True
-    tts_backend: str = "auto"       # auto|piper|espeak|none
+    tts_backend: str = "auto"       # auto|qwentts|piper|espeak|none
     mic_enabled: bool = True        # ears on; per Ava's Nov 24 direction she listens on the desktop and in Game Mode too
     mic_push_to_talk: bool = False  # no push-to-talk per Ava's Nov 3 design
     mic_stt: str = "auto"           # auto|whisper|none (local only)

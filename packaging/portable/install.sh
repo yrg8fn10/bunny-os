@@ -213,6 +213,20 @@ else
   warn "MAM model missing; Bun Bun falls back to her rule lines"
 fi
 
+# --- 2b-2c. Bun Bun's official voice (Qwen3-TTS engine, Serena preset) ---------
+step "Installing Bun Bun's official voice"
+if [[ -d "${HERE}/qwentts" ]]; then
+  run rm -rf "${DESTDIR}${LIB:?}/qwentts"
+  run install -d -m 0755 "${DESTDIR}${LIB}/qwentts"
+  for item in "${HERE}"/qwentts/*; do
+    [[ -e "${item}" ]] || continue
+    install -m 0755 "${item}" "${DESTDIR}${LIB}/qwentts/$(basename "${item}")"
+  done
+  info "qwentts   : ${LIB}/qwentts (Qwen3-TTS engine, Serena preset)"
+else
+  warn "qwentts engine missing; Bun Bun falls back to the bank + Piper voices"
+fi
+
 # --- 2b-3. the Game Mode theme (CSS Loader) --------------------------------------
 #  Same layout the ISO uses: system copy under /usr/share/bunny-os/decky-theme,
 #  then placed where Decky's CSS Loader reads themes (the deck user's

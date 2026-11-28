@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -173,6 +174,113 @@ class VoiceBankBackend(Backend):
         return out.is_file() and out.stat().st_size > 0
 
 
+class QwenTTSBackend(Backend):
+    """Bun Bun's official voice: Qwen3-TTS 0.6B CustomVoice, the SERENA preset.
+
+    The engine is the bundled qwentts.cpp ``qwen-tts`` CLI, reached through
+    the ``bunbun-qwen-tts`` wrapper, which pins the bundled talker and codec
+    GGUFs.  Fully local, no API key, and no real child's voice is cloned:
+    Serena is a synthetic CustomVoice preset.  Ava picked this voice by ear
+    on Nov 27 2026; it supersedes the Kokoro af_sky color (now a fallback
+    behind the pre-rendered voice bank).
+    """
+
+    name = "qwentts"
+
+    # Delivery styles, all proven by ear (Ava approved the voice Nov 27 2026).
+    INSTRUCT_DEFAULT = "cheerful playful little kid"
+    INSTRUCT_SLOW = "gentle sleepy little kid"
+    INSTRUCT_ENCOURAGING = "encouraging small child"
+
+    TALKER_GGUF = "qwen-talker-0.6b-customvoice-Q4_K_M.gguf"
+    CODEC_GGUF = "qwen-tokenizer-12hz-Q4_K_M.gguf"
+
+    def __init__(self, binary: str | None = None, model: Path | None = None,
+                 codec: Path | None = None, speaker: str = "serena",
+                 lang: str = "English", max_new: int = 150,
+                 codec_chunk: float = 4.0, timeout: float = 300.0):
+        self.binary = (binary or os.environ.get("BUNBUN_QWENTTS_BIN")
+                       or "bunbun-qwen-tts")
+        self.model = model or self._find_model(self.TALKER_GGUF,
+                                               "BUNBUN_QWENTTS_TALKER")
+        self.codec = codec or self._find_model(self.CODEC_GGUF,
+                                               "BUNBUN_QWENTTS_CODEC")
+        self.speaker = speaker
+        self.lang = lang
+        self.max_new = max_new
+        self.codec_chunk = codec_chunk
+        self.timeout = timeout
+        self.instruct = self.INSTRUCT_DEFAULT
+
+    @staticmethod
+    def _find_model(filename: str, env_key: str) -> Path | None:
+        """The bundled GGUF: env override, then the standard share dirs."""
+        env = os.environ.get(env_key)
+        if env:
+            candidate = Path(env)
+            return candidate if candidate.is_file() else None
+        for base in (Path("/usr/local/share/bunbun/models"),
+                     Path("/usr/share/bunbun/models")):
+            candidate = base / filename
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _find_binary(self) -> str:
+        """The CLI: configured, then bunbun-qwen-tts, then the install spot."""
+        if self.binary and (os.path.sep in self.binary or self.binary.startswith("/")):
+            return self.binary if Path(self.binary).is_file() else ""
+        found = shutil.which(self.binary)
+        if found:
+            return found
+        # systemd services run with a minimal PATH; check the install spot
+        for cand in ("/usr/local/bin/bunbun-qwen-tts", "/usr/bin/bunbun-qwen-tts"):
+            if Path(cand).exists():
+                return cand
+        return ""
+
+    def available(self) -> bool:
+        return bool(self._find_binary() and self.model and self.model.is_file()
+                    and self.codec and self.codec.is_file())
+
+    def set_params(self, **params: float) -> None:
+        """Mood-driven delivery instruct (see emotion.MoodEngine.voice_params).
+
+        Low energy speaks slow and gentle (bedtime keeps her soft); low
+        valence leans encouraging; everything else stays the cheerful
+        default Ava approved.
+        """
+        length = params.get("length_scale")
+        noise = params.get("noise_scale")
+        if length is not None and float(length) >= 1.15:
+            self.instruct = self.INSTRUCT_SLOW
+        elif noise is not None and float(noise) >= 0.8:
+            self.instruct = self.INSTRUCT_ENCOURAGING
+        else:
+            self.instruct = self.INSTRUCT_DEFAULT
+
+    def synthesize(self, text: str, out: Path) -> bool:
+        if not self.available():
+            return False
+        binary = self._find_binary()
+        cmd = [binary, "--speaker", self.speaker, "--lang", self.lang,
+               "--instruct", self.instruct, "--max-new", str(self.max_new),
+               "--codec-chunk-dur", str(self.codec_chunk), "-o", str(out)]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=(text or "").encode("utf-8"),
+                capture_output=True, timeout=self.timeout, check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            LOG.warning("qwentts failed: %s", exc)
+            return False
+        if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
+            LOG.warning("qwentts produced no audio (rc=%s)", proc.returncode)
+            return False
+        return True
+
+
 class ChainBackend(Backend):
     """Try backends in order; the first that produces audio wins."""
 
@@ -234,6 +342,13 @@ def detect(config) -> Backend:  # noqa: ANN001 - AgentConfig, avoid import cycle
     if mode == "none":
         return NullBackend()
     chain: list[Backend] = []
+    if mode in {"auto", "qwentts"}:
+        qwentts = QwenTTSBackend()
+        if qwentts.available():
+            chain.append(qwentts)
+        elif mode == "qwentts":
+            LOG.warning("qwentts requested but unavailable (binary=%s model=%s codec=%s)",
+                        qwentts.binary, qwentts.model, qwentts.codec)
     if mode in {"auto", "bank"}:
         bank_dir = Path(config.voice_bank) if config.voice_bank else find_bank()
         if bank_dir:

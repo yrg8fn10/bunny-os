@@ -57,6 +57,7 @@ for file in "${DESTDIR}${BIN}/bunny-panel" \
             "${DESTDIR}${APPS}/bunny-os-setup.desktop" \
             "${DESTDIR}/etc/xdg/autostart/bunny-os-setup.desktop" \
             "${DESTDIR}${BIN}/piper" \
+            "${DESTDIR}${BIN}/bunbun-qwen-tts" \
             "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunbun.service" \
             "${DESTDIR}/etc/systemd/user/default.target.wants/bunny-bunbun.service" \
             "${DESTDIR}${PREFIX}/lib/systemd/user/bunny-bunhud.service" \

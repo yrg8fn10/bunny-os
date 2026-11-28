@@ -177,11 +177,12 @@ cp -a "${VOICE_CACHE}/bunny-default.onnx" "${VOICE_CACHE}/bunny-default.onnx.jso
 mkdir -p "${STAGE}/voice/bank"
 cp -a "${ROOT}/bunbun/assets/voice-bank/." "${STAGE}/voice/bank/"
 cat > "${STAGE}/voice/VOICE-NOTE.txt" <<'EOF'
-Bun Bun's default voice is the "THV" speaker (speaker id 1) of Piper's
-en_US-l2arctic-medium model: a real person reading English with a gentle
-Vietnamese accent. Dataset: L2-Arctic (Zhao et al., Interspeech 2018),
-license CC BY-NC 4.0. Free for personal and non-commercial use; check the
-license before any commercial redistribution.
+Bun Bun's official voice is the SERENA preset of Qwen3-TTS 0.6B
+CustomVoice (the qwentts.cpp engine, Apache-2.0), fully local. Serena is a
+synthetic preset voice, not a cloned real child. The Piper
+en_US-l2arctic engine (dataset: L2-Arctic, Zhao et al., Interspeech 2018,
+license CC BY-NC 4.0) and the pre-rendered v2 voice bank (Kokoro af_sky)
+remain as fallbacks if the Qwen engine is unavailable.
 EOF
 
 # --- Bun Bun's ears: whisper.cpp local speech-to-text ----------------------------
@@ -230,6 +231,37 @@ WRAP
   chmod 0755 "${STAGE}/bin/bunbun-llama-cli"
 else
   log_warn "no llama.cpp CLI / model found (${MAM_CLI_DIR}, ${MAM_MODEL_SRC}); this payload ships without Bun Bun's local brain"
+fi
+
+# --- Bun Bun's official voice: the Qwen3-TTS engine (the SERENA preset) ------
+#  Ava picked this voice by ear on Nov 27 2026 (it supersedes the Kokoro
+#  af_sky color, which now lives behind the pre-rendered voice bank as a
+#  fallback).  The engine is qwentts.cpp (Apache-2.0, built once per build
+#  host with zig cc; Serena is a synthetic CustomVoice preset, so no real
+#  child's voice is involved), the models are the pinned Qwen3-TTS 0.6B
+#  CustomVoice talker + codec GGUFs.  Sources are env-overridable per build
+#  host, like STT_BIN above.
+QWEN_BIN_SRC="${QWEN_BIN_SRC:-/workspace/vh_keep/qwentts/build}"
+QWEN_MODELS_SRC="${QWEN_MODELS_SRC:-/workspace/vh_keep/models}"
+log_info "voice    staging Bun Bun's official voice (Qwen3-TTS, Serena preset)"
+if [[ -x "${QWEN_BIN_SRC}/qwen-tts" && -f "${QWEN_MODELS_SRC}/talker.gguf" && -f "${QWEN_MODELS_SRC}/tokenizer.gguf" ]]; then
+  mkdir -p "${STAGE}/qwentts" "${STAGE}/share/bunbun/models" "${STAGE}/bin"
+  cp -a "${QWEN_BIN_SRC}/qwen-tts" "${STAGE}/qwentts/qwen-tts"
+  cp -a "${QWEN_BIN_SRC}"/*.so* "${STAGE}/qwentts/" 2>/dev/null || true
+  cp -a "${QWEN_MODELS_SRC}/talker.gguf" "${STAGE}/share/bunbun/models/qwen-talker-0.6b-customvoice-Q4_K_M.gguf"
+  cp -a "${QWEN_MODELS_SRC}/tokenizer.gguf" "${STAGE}/share/bunbun/models/qwen-tokenizer-12hz-Q4_K_M.gguf"
+  cat > "${STAGE}/bin/bunbun-qwen-tts" <<'WRAP'
+#!/bin/sh
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LIBS="${DIR}/../lib/bunny/qwentts"
+MODELS="${BUNBUN_MODELS_DIR:-/usr/local/share/bunbun/models}"
+LD_LIBRARY_PATH="${LIBS}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}" exec "${LIBS}/qwen-tts" \
+  --model "${MODELS}/qwen-talker-0.6b-customvoice-Q4_K_M.gguf" \
+  --codec "${MODELS}/qwen-tokenizer-12hz-Q4_K_M.gguf" "$@"
+WRAP
+  chmod 0755 "${STAGE}/bin/bunbun-qwen-tts"
+else
+  log_warn "no qwentts engine / models found (${QWEN_BIN_SRC}, ${QWEN_MODELS_SRC}); this payload ships without Bun Bun's official voice"
 fi
 
 # --- documentation and installer --------------------------------------------
